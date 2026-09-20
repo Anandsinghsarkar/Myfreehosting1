@@ -74,19 +74,15 @@ def admin_required(f):
     return w
 
 
-# --- Security (DISABLED — any .py file allowed) ---
-# NOTE: Production me safety ke liye Docker isolation lagana chahiye.
-# Filhaal scan disable hai taaki koi bhi valid script host ho jaye.
-DANGEROUS = []  # Empty list → kuch block nahi hoga
+# --- Security (DISABLED) ---
+DANGEROUS = []
 
 
 def scan_code(text):
-    """Security scan disabled. Always passes."""
     return True, None
 
 
 # ========== PUBLIC ==========
-
 @app.route('/')
 def index():
     if current_user():
@@ -131,7 +127,6 @@ def logout():
 
 
 # ========== USER PAGES ==========
-
 @app.route('/dashboard')
 @login_required
 def dashboard():
@@ -176,13 +171,39 @@ def upload():
         return jsonify({'ok': False, 'error': 'No file'}), 400
     if db.count_scripts(user['uid']) >= user.get('file_limit', 2):
         return jsonify({'ok': False, 'error': 'File limit reached'}), 400
+
     filename = secure_filename(f.filename)
     ext = os.path.splitext(filename)[1].lower()
     if ext not in ALLOWED_EXT:
         return jsonify({'ok': False, 'error': 'Only .py/.js/.zip'}), 400
+
     sid = str(uuid.uuid4())[:12]
     sdir = runner.get_script_dir(user['uid'], sid)
     os.makedirs(sdir, exist_ok=True)
+
+    # Handle requirements (file or text)
+    req_content = None
+    req_file = request.files.get('requirements')
+    if req_file and req_file.filename:
+        try:
+            req_content = req_file.read().decode('utf-8', errors='ignore')
+        except Exception as e:
+            print(f"⚠️ Req file read failed: {e}")
+
+    if not req_content:
+        req_text = request.form.get('requirements_text', '').strip()
+        if req_text:
+            req_content = req_text
+
+    if req_content and req_content.strip():
+        try:
+            req_path = os.path.join(sdir, 'requirements.txt')
+            with open(req_path, 'w', encoding='utf-8') as rf:
+                rf.write(req_content)
+            print(f"✅ Saved requirements.txt for {sid}")
+        except Exception as e:
+            print(f"⚠️ Req save failed: {e}")
+
     if ext == '.zip':
         return _handle_zip(f, user, sid, sdir)
     return _handle_single(f, user, sid, sdir, filename, ext)
@@ -192,6 +213,7 @@ def _handle_single(f, user, sid, sdir, filename, ext):
     content = f.read()
     if len(content) > MAX_FILE_SIZE:
         return jsonify({'ok': False, 'error': 'Too large'}), 400
+
     try:
         text = content.decode('utf-8', errors='ignore')
         ok, pat = scan_code(text)
@@ -199,12 +221,35 @@ def _handle_single(f, user, sid, sdir, filename, ext):
             return jsonify({'ok': False, 'error': f'Dangerous: {pat}'}), 400
     except Exception:
         pass
+
     local_path = os.path.join(sdir, filename)
     with open(local_path, 'wb') as out:
         out.write(content)
+
+    # Auto-install requirements (agar upload kiya)
+    req_path = os.path.join(sdir, 'requirements.txt')
+    if os.path.exists(req_path) and ext == '.py':
+        try:
+            print(f"🔄 Installing requirements for {sid}")
+            r = subprocess.run(
+                [sys.executable, '-m', 'pip', 'install', '--no-cache-dir', '-r', req_path],
+                cwd=sdir, capture_output=True, text=True,
+                encoding='utf-8', errors='ignore', timeout=300
+            )
+            print(f"pip rc={r.returncode}")
+        except Exception as e:
+            print(f"⚠️ Req install failed: {e}")
+
     storage_path = storage_helper.upload_script_file(
         local_path, user['uid'], sid, filename
     ) or sdir
+
+    if os.path.exists(req_path):
+        try:
+            storage_helper.upload_script_file(req_path, user['uid'], sid, 'requirements.txt')
+        except Exception:
+            pass
+
     db.add_script(sid, user['uid'], filename, ext[1:], storage_path)
     return jsonify({'ok': True, 'sid': sid})
 
@@ -220,10 +265,12 @@ def _handle_zip(f, user, sid, sdir):
                 if not p.startswith(os.path.abspath(tmp)):
                     return jsonify({'ok': False, 'error': 'Unsafe zip'}), 400
             z.extractall(tmp)
+
         items = os.listdir(tmp)
         if len(items) == 1 and os.path.isdir(os.path.join(tmp, items[0])):
             tmp = os.path.join(tmp, items[0])
             items = os.listdir(tmp)
+
         py = [x for x in items if x.endswith('.py')]
         js = [x for x in items if x.endswith('.js')]
         main, main_type = None, None
@@ -239,22 +286,14 @@ def _handle_zip(f, user, sid, sdir):
             elif js: main, main_type = js[0], 'js'
         if not main:
             return jsonify({'ok': False, 'error': 'No .py/.js found'}), 400
-        for root, _, files in os.walk(tmp):
-            for fn in files:
-                if fn.endswith(('.py', '.js', '.sh')):
-                    try:
-                        with open(os.path.join(root, fn), 'r', encoding='utf-8', errors='ignore') as fh:
-                            ok, pat = scan_code(fh.read())
-                            if not ok:
-                                return jsonify({'ok': False, 'error': f'{fn}: {pat}'}), 400
-                    except Exception:
-                        pass
+
         for item in os.listdir(tmp):
             src = os.path.join(tmp, item)
             dst = os.path.join(sdir, item)
             if os.path.isdir(dst): shutil.rmtree(dst)
             elif os.path.exists(dst): os.remove(dst)
             shutil.move(src, dst)
+
         req = os.path.join(sdir, 'requirements.txt')
         if os.path.exists(req):
             try:
@@ -263,9 +302,9 @@ def _handle_zip(f, user, sid, sdir):
                                cwd=sdir, capture_output=True, timeout=300)
             except Exception:
                 pass
-        uploaded = storage_helper.upload_script_folder(sdir, user['uid'], sid)
-        storage_path = sdir
-        db.add_script(sid, user['uid'], main, main_type, storage_path)
+
+        storage_helper.upload_script_folder(sdir, user['uid'], sid)
+        db.add_script(sid, user['uid'], main, main_type, sdir)
         return jsonify({'ok': True, 'sid': sid})
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
@@ -282,10 +321,9 @@ def api_start(sid):
     sdir = runner.get_script_dir(s['user_id'], sid)
     fpath = os.path.join(sdir, s['name'])
     if not os.path.exists(fpath):
-        print(f"⚠️ File missing, downloading from storage: {sid}")
-        ok_dl = storage_helper.download_script_folder(s['user_id'], sid, sdir)
-        if not ok_dl:
-            return jsonify({'ok': False, 'error': 'File missing. Re-upload karo.'}), 400
+        storage_helper.download_script_folder(s['user_id'], sid, sdir)
+    if not os.path.exists(fpath):
+        return jsonify({'ok': False, 'error': 'File missing'}), 400
     ok, msg = runner.start_script(sid, s['user_id'], fpath, s['type'])
     if ok: db.update_script(sid, {'running': True})
     return jsonify({'ok': ok, 'message': msg})
@@ -301,6 +339,23 @@ def api_stop(sid):
         return jsonify({'ok': False}), 403
     ok, msg = runner.stop_script(sid)
     if ok: db.update_script(sid, {'running': False})
+    return jsonify({'ok': ok, 'message': msg})
+
+
+@app.route('/api/script/<sid>/restart', methods=['POST'])
+@login_required
+def api_restart(sid):
+    user = current_user()
+    s = db.get_script(sid)
+    if not s: return jsonify({'ok': False}), 404
+    if s['user_id'] != user['uid'] and not user.get('is_admin'):
+        return jsonify({'ok': False}), 403
+    runner.stop_script(sid)
+    sdir = runner.get_script_dir(s['user_id'], sid)
+    fpath = os.path.join(sdir, s['name'])
+    if not os.path.exists(fpath):
+        storage_helper.download_script_folder(s['user_id'], sid, sdir)
+    ok, msg = runner.start_script(sid, s['user_id'], fpath, s['type'])
     return jsonify({'ok': ok, 'message': msg})
 
 
@@ -366,7 +421,6 @@ def payment_history():
 
 
 # ========== ADMIN ==========
-
 @app.route('/admin')
 @admin_required
 def admin_dashboard():
@@ -429,8 +483,6 @@ def admin_delete_user(uid):
     return redirect(url_for('admin_dashboard'))
 
 
-# ===== ADMIN PAYMENTS + QR + PRICING =====
-
 @app.route('/admin/payments')
 @admin_required
 def admin_payments():
@@ -472,7 +524,6 @@ def admin_payment_status(pid):
 @app.route('/admin/pricing', methods=['POST'])
 @admin_required
 def admin_update_pricing():
-    """Admin pricing + QR update kare."""
     try:
         pricing = {
             'free': {
@@ -502,14 +553,15 @@ def admin_update_pricing():
             'payment_note': request.form.get('payment_note', '').strip(),
         }
 
-        # QR image upload (agar hai)
         qr_file = request.files.get('qr_image')
         if qr_file and qr_file.filename:
             tmp_dir = tempfile.mkdtemp()
             try:
                 tmp_path = os.path.join(tmp_dir, secure_filename(qr_file.filename))
                 qr_file.save(tmp_path)
-                url = storage_helper.upload_qr_image(tmp_path, f"qr_{int(datetime.now().timestamp())}.png")
+                url = storage_helper.upload_qr_image(
+                    tmp_path, f"qr_{int(datetime.now().timestamp())}.png"
+                )
                 if url:
                     data['qr_code_url'] = url
                     flash("QR uploaded ✅", "success")
