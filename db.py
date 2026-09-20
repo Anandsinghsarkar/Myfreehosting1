@@ -1,11 +1,7 @@
 # -*- coding: utf-8 -*-
-"""
-Firestore database helpers.
-"""
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 from firebase_config import get_db
-
 
 ADMIN_EMAILS = [
     e.strip().lower()
@@ -18,8 +14,7 @@ def _now():
     return datetime.utcnow().isoformat()
 
 
-# ==================== USERS ====================
-
+# --- USERS ---
 def get_user(uid):
     db = get_db()
     doc = db.collection('users').document(uid).get()
@@ -80,8 +75,6 @@ def set_user_limit(uid, limit):
 
 
 def set_user_plan(uid, plan, days=30):
-    """Plan set + expiry set."""
-    from datetime import timedelta
     expiry = (datetime.utcnow() + timedelta(days=days)).isoformat()
     update_user(uid, {'plan': plan, 'plan_expiry': expiry})
 
@@ -102,8 +95,7 @@ def count_users():
     return len(list(db.collection('users').stream()))
 
 
-# ==================== SCRIPTS ====================
-
+# --- SCRIPTS ---
 def add_script(sid, user_id, name, stype, storage_path=''):
     db = get_db()
     db.collection('scripts').document(sid).set({
@@ -155,8 +147,7 @@ def count_scripts(user_id):
     return len(list_scripts(user_id))
 
 
-# ==================== PAYMENTS ====================
-
+# --- PAYMENTS ---
 def add_payment(user_id, amount, method, status, note='', screenshot_url=''):
     db = get_db()
     pid = db.collection('payments').document().id
@@ -191,18 +182,17 @@ def update_payment_status(pid, status):
     db.collection('payments').document(pid).update({'status': status})
 
 
-# ==================== SETTINGS (PRICING + QR) ====================
-
+# --- SETTINGS ---
 DEFAULT_SETTINGS = {
     'pricing': {
         'free': {'price': 0, 'bots': 2, 'days': 0},
         'premium': {'price': 199, 'bots': 20, 'days': 30},
         'business': {'price': 499, 'bots': 999, 'days': 30},
     },
-    'per_bot_price': 49,      # ek extra bot ka price
+    'per_bot_price': 49,
     'upi_id': 'a7hosting@upi',
     'upi_name': 'A7 Hosting',
-    'qr_code_url': '',        # admin upload karega
+    'qr_code_url': '',
     'offer_text': 'Get 50% OFF on Premium Plan',
     'support_contact': '@a7hosting',
     'payment_note': 'Payment ke baad screenshot admin ko bhejo.',
@@ -214,7 +204,6 @@ def get_settings():
     doc = db.collection('settings').document('global').get()
     if doc.exists:
         data = doc.to_dict()
-        # merge defaults
         merged = dict(DEFAULT_SETTINGS)
         merged.update(data)
         return merged
@@ -226,8 +215,7 @@ def update_settings(data):
     db.collection('settings').document('global').set(data, merge=True)
 
 
-# ==================== INSTALL LOGS ====================
-
+# --- INSTALL LOGS ---
 def log_install(user_id, module, status, log):
     try:
         db = get_db()
