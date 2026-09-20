@@ -18,6 +18,10 @@ logs/
 *.swp
 .DS_Store
 Thumbs.db
-.firebase-key.json
 firebase-key.json
-.railway/
+.firebase-key.json
+.git/
+.gitignore
+README.md
+nixpacks.toml
+railway.json
