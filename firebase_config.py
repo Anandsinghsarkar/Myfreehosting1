@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 """
 Firebase Admin SDK initialization.
-Koi bhi cheez is file me import NAHI karo — ye base file hai.
 """
 import os
 import json
@@ -18,13 +17,10 @@ _initialized = False
 
 
 def init_firebase():
-    """Initialize Firebase once. Safe to call multiple times."""
     global _db, _bucket, _initialized
-
     if _initialized:
         return _db, _bucket
 
-    # --- Load credentials ---
     key_json = os.environ.get('FIREBASE_KEY_JSON')
 
     if key_json:
@@ -37,17 +33,13 @@ def init_firebase():
         cred = credentials.Certificate(KEY_PATH)
     else:
         raise RuntimeError(
-            "Firebase key not found. Set FIREBASE_KEY_JSON env var "
-            "or place firebase-key.json in project root."
+            "Firebase key not found. Set FIREBASE_KEY_JSON env var."
         )
 
     bucket_name = os.environ.get('FIREBASE_STORAGE_BUCKET', '')
 
-    # Avoid double-init
     if not firebase_admin._apps:
-        firebase_admin.initialize_app(cred, {
-            'storageBucket': bucket_name
-        })
+        firebase_admin.initialize_app(cred, {'storageBucket': bucket_name})
 
     _db = firestore.client()
 
@@ -63,14 +55,12 @@ def init_firebase():
 
 
 def get_db():
-    """Get Firestore client. Auto-init if needed."""
     if not _initialized:
         init_firebase()
     return _db
 
 
 def get_bucket():
-    """Get Firebase Storage bucket."""
     if not _initialized:
         init_firebase()
     return _bucket
