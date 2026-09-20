@@ -1,7 +1,4 @@
 # -*- coding: utf-8 -*-
-"""
-Script process manager — subprocess.Popen based.
-"""
 import os
 import sys
 import re
@@ -11,12 +8,7 @@ from datetime import datetime
 
 import psutil
 
-
-# ============================================================
-# IMPORT NAME → PYPI PACKAGE NAME MAPPING
-# ============================================================
 PACKAGE_MAP = {
-    # --- Telegram ecosystem ---
     "telegram":      "python-telegram-bot",
     "telebot":       "pyTelegramBotAPI",
     "telethon":      "Telethon",
@@ -24,8 +16,6 @@ PACKAGE_MAP = {
     "pyromod":       "pyromod",
     "tgcrypto":      "TgCrypto",
     "aiogram":       "aiogram",
-
-    # --- Common import↔package differences ---
     "PIL":           "Pillow",
     "cv2":           "opencv-python",
     "bs4":           "beautifulsoup4",
@@ -62,16 +52,12 @@ PACKAGE_MAP = {
     "cryptography":  "cryptography",
     "github":        "PyGithub",
     "requests":      "requests",
-
-    # --- Extra safety net ---
     "nacl":          "PyNaCl",
     "git":           "GitPython",
     "jose":          "python-jose",
     "pkg_resources": "setuptools",
     "lxml":          "lxml",
     "chardet":       "chardet",
-
-    # --- More common ones ---
     "docx":          "python-docx",
     "pptx":          "python-pptx",
     "openpyxl":      "openpyxl",
@@ -127,7 +113,6 @@ PACKAGE_MAP = {
     "werkzeug":      "Werkzeug",
     "click":         "click",
     "typer":         "typer",
-    "rich":          "rich",
     "loguru":        "loguru",
     "structlog":     "structlog",
     "orjson":        "orjson",
@@ -137,8 +122,6 @@ PACKAGE_MAP = {
     "boltons":       "boltons",
 }
 
-
-# --- Core Python modules (install nahi karte) ---
 CORE_MODULES = {
     'os', 'sys', 're', 'json', 'time', 'datetime', 'math', 'random',
     'logging', 'threading', 'subprocess', 'asyncio', 'collections',
@@ -168,7 +151,6 @@ CORE_MODULES = {
     'webbrowser', 'wsgiref', 'xdrlib', 'xmlrpc', 'zipapp', 'zlib',
     'zoneinfo',
 }
-
 
 RUNNING = {}
 LOCK = threading.Lock()
