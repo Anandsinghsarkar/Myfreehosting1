@@ -1,10 +1,51 @@
+<!-- REAL_NAME: templates/admin.html -->
 {% extends "base.html" %}
 {% block title %}Admin Panel{% endblock %}
 
 {% block content %}
 <h1 class="page-title">👑 Admin Panel</h1>
 
-<!-- Stats -->
+<!-- ============================================ -->
+<!-- QUICK ACTIONS: Review Queue + Terminal       -->
+<!-- ============================================ -->
+{% if pending_count and pending_count > 0 %}
+<div class="card" style="background: linear-gradient(135deg, rgba(251,191,36,0.15), rgba(251,146,60,0.1));
+     border: 1px solid rgba(251,191,36,0.4); margin-bottom: 14px;">
+    <div class="row-between">
+        <div style="flex:1; min-width:0;">
+            <div style="font-size: 12px; color: var(--gold); font-weight: 700; letter-spacing: 0.5px;">
+                ⏳ PENDING REVIEWS
+            </div>
+            <div style="font-size: 22px; font-weight: 800; margin-top: 4px; color: var(--text);">
+                {{ pending_count }} file(s) waiting for approval
+            </div>
+        </div>
+        <a href="{{ url_for('admin_review_queue') }}" class="btn btn-primary">
+            🔍 Review Now →
+        </a>
+    </div>
+</div>
+{% endif %}
+
+<div class="card" style="margin-bottom: 14px;">
+    <div class="row-between">
+        <div style="flex:1; min-width:0;">
+            <div style="font-size: 12px; color: var(--cyan-hi); font-weight: 700; letter-spacing: 0.5px;">
+                💻 TERMINAL
+            </div>
+            <div class="muted small" style="margin-top: 4px;">
+                Server pe direct commands chalao — pip install, debugging, logs, etc.
+            </div>
+        </div>
+        <a href="{{ url_for('admin_terminal_page') }}" class="btn btn-cyan">
+            Open Terminal →
+        </a>
+    </div>
+</div>
+
+<!-- ============================================ -->
+<!-- STATS ROW                                     -->
+<!-- ============================================ -->
 <div class="stats-row">
     <div class="stat-card">
         <div class="stat-icon purple">👥</div>
@@ -28,112 +69,306 @@
         </div>
     </div>
     <div class="stat-card">
-        <div class="stat-icon gold">💰</div>
+        <div class="stat-icon gold">⏳</div>
         <div class="stat-body">
-            <div class="label">Payments</div>
-            <div class="value">—</div>
+            <div class="label">Pending</div>
+            <div class="value">{{ pending_count }}</div>
         </div>
     </div>
 </div>
 
-<!-- Users - Card View -->
+<!-- ============================================ -->
+<!-- USERS LIST                                    -->
+<!-- ============================================ -->
 <div class="card mb-3">
     <div class="card-header">
         <h3>👥 All Users</h3>
+        <span class="badge badge-primary">{{ users|length }}</span>
     </div>
+
     {% if users %}
     <div style="display: flex; flex-direction: column; gap: 12px;">
         {% for u in users %}
-        <div style="padding: 12px; border: 1px solid var(--border); border-radius: 10px;">
+        <div style="padding: 12px; border: 1px solid var(--border); border-radius: 10px;
+                    background: var(--bg-2);">
+            <!-- User header -->
             <div class="row mb-2" style="gap: 10px;">
                 {% if u.picture %}
-                    <img src="{{ u.picture }}" style="width:38px;height:38px;border-radius:50%;">
+                    <img src="{{ u.picture }}" style="width:38px;height:38px;border-radius:50%;
+                         flex-shrink:0; object-fit:cover;">
                 {% else %}
-                    <div style="width:38px;height:38px;border-radius:50%;background:linear-gradient(135deg,var(--primary),var(--cyan));display:flex;align-items:center;justify-content:center;font-weight:700;flex-shrink:0;">{{ u.name[0]|upper }}</div>
+                    <div style="width:38px;height:38px;border-radius:50%;
+                         background:linear-gradient(135deg,var(--primary),var(--cyan));
+                         display:flex;align-items:center;justify-content:center;
+                         font-weight:700;flex-shrink:0;color:white;">
+                        {{ u.name[0]|upper }}
+                    </div>
                 {% endif %}
+
                 <div style="flex: 1; min-width: 0;">
-                    <strong style="font-size: 13px;">{{ u.name }}</strong>
-                    {% if u.is_admin %}<span class="badge badge-admin">👑</span>{% endif %}
-                    <div class="muted small" style="word-break: break-all;">{{ u.email }}</div>
+                    <div class="row" style="gap: 6px; flex-wrap: wrap;">
+                        <strong style="font-size: 13px;">{{ u.name }}</strong>
+                        {% if u.is_admin %}
+                            <span class="badge badge-admin">👑 Admin</span>
+                        {% endif %}
+                    </div>
+                    <div class="muted small" style="word-break: break-all;">
+                        {{ u.email }}
+                    </div>
                 </div>
-                <span class="badge {{ 'badge-premium' if u.plan == 'premium' else 'badge-off' }}">{{ u.plan|upper }}</span>
+
+                <span class="badge {{ 'badge-premium' if u.plan == 'premium' else 'badge-off' }}">
+                    {{ u.plan|upper }}
+                </span>
             </div>
 
-            <div class="muted small mb-2">
-                📁 {{ u.script_count }} bots · Limit: {{ u.file_limit }}
+            <!-- User stats -->
+            <div class="muted small mb-2" style="display: flex; gap: 14px; flex-wrap: wrap;">
+                <span>📁 {{ u.script_count }} bots</span>
+                <span>📊 Limit: {{ u.file_limit }}</span>
+                {% if u.plan_expiry %}
+                    <span>⏱️ Exp: {{ u.plan_expiry[:10] }}</span>
+                {% endif %}
             </div>
 
-            <form method="post" action="{{ url_for('admin_set_limit', uid=u.uid) }}" style="display: flex; gap: 6px; margin-bottom: 8px;">
-                <input name="limit" type="number" min="0" value="{{ u.file_limit }}" style="flex: 1; padding: 8px 10px; font-size: 14px;">
+            <!-- File limit edit -->
+            <form method="post" action="{{ url_for('admin_set_limit', uid=u.uid) }}"
+                  style="display: flex; gap: 6px; margin-bottom: 8px;">
+                <input name="limit" type="number" min="0" value="{{ u.file_limit }}"
+                       style="flex: 1; padding: 8px 10px; font-size: 14px;">
                 <button class="btn btn-ghost btn-sm">Save Limit</button>
             </form>
 
-            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 6px;">
+            <!-- Plan + Admin toggles -->
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 6px;">
                 <form method="post" action="{{ url_for('admin_set_plan', uid=u.uid) }}">
-                    <select name="plan" onchange="this.form.submit()" style="padding:8px;font-size:13px;">
-                        <option value="free" {{ 'selected' if u.plan=='free' }}>Free</option>
+                    <select name="plan" onchange="this.form.submit()"
+                            style="padding:8px;font-size:13px;width:100%;">
+                        <option value="free" {{ 'selected' if u.plan=='free' }}>Free Plan</option>
                         <option value="premium" {{ 'selected' if u.plan=='premium' }}>Premium</option>
                         <option value="business" {{ 'selected' if u.plan=='business' }}>Business</option>
                     </select>
                     <input type="hidden" name="days" value="30">
                 </form>
+
                 <form method="post" action="{{ url_for('admin_toggle_admin', uid=u.uid) }}">
                     <input type="hidden" name="is_admin" value="{{ '0' if u.is_admin else '1' }}">
-                    <button class="btn btn-ghost btn-sm" style="width:100%;">{{ 'Remove Admin' if u.is_admin else 'Make Admin' }}</button>
+                    <button class="btn btn-ghost btn-sm" style="width:100%;">
+                        {{ '❌ Remove Admin' if u.is_admin else '👑 Make Admin' }}
+                    </button>
                 </form>
             </div>
 
+            <!-- Delete user -->
             {% if u.uid != user.uid %}
-            <form method="post" action="{{ url_for('admin_delete_user', uid=u.uid) }}" style="margin-top: 6px;" onsubmit="return confirm('Delete this user?')">
-                <button class="btn btn-danger btn-sm" style="width: 100%;">🗑️ Delete User</button>
+            <form method="post" action="{{ url_for('admin_delete_user', uid=u.uid) }}"
+                  onsubmit="return confirm('Delete user {{ u.name }} aur unke saare bots?')">
+                <button class="btn btn-danger btn-sm" style="width: 100%;">
+                    🗑️ Delete User
+                </button>
             </form>
             {% endif %}
         </div>
         {% endfor %}
     </div>
+    {% else %}
+    <p class="muted small" style="text-align: center; padding: 20px;">
+        No users yet.
+    </p>
     {% endif %}
 </div>
 
-<!-- Bots - Card View -->
+<!-- ============================================ -->
+<!-- ALL BOTS LIST                                 -->
+<!-- ============================================ -->
 <div class="card">
-    <div class="card-header"><h3>🤖 All Running Bots</h3></div>
+    <div class="card-header">
+        <h3>🤖 All Bots</h3>
+        <span class="badge badge-primary">{{ scripts|length }}</span>
+    </div>
+
     {% if scripts %}
     <div style="display: flex; flex-direction: column; gap: 10px;">
         {% for s in scripts %}
-        <div style="padding: 12px; border: 1px solid var(--border); border-radius: 10px;">
+        <div style="padding: 12px; border: 1px solid var(--border); border-radius: 10px;
+                    background: var(--bg-2);">
+
+            <!-- Bot header -->
             <div class="row-between mb-2">
-                <strong style="font-size: 13px; word-break: break-all;">{{ s.name }}</strong>
-                {% if s.running %}
+                <strong style="font-size: 13px; word-break: break-all; flex: 1;">
+                    {{ s.name }}
+                </strong>
+
+                <!-- Status badge -->
+                {% if s.status == 'pending' %}
+                    <span class="badge badge-gold">⏳ Pending</span>
+                {% elif s.status == 'rejected' %}
+                    <span class="badge badge-red">❌ Rejected</span>
+                {% elif s.running %}
                     <span class="badge badge-on"><span class="dot on"></span> Running</span>
+                {% elif s.status == 'approved' %}
+                    <span class="badge badge-green">✓ Approved</span>
                 {% else %}
                     <span class="badge badge-off"><span class="dot off"></span> Stopped</span>
                 {% endif %}
             </div>
+
+            <!-- Owner + info -->
             <div class="muted small mb-2" style="word-break: break-all;">
-                Owner: {{ s.user_id }} · {{ s.type|upper }}
+                👤 Owner: <code>{{ s.user_id }}</code> · {{ s.type|upper }}<br>
+                🆔 {{ s.id }} · 📅 {{ s.created_at[:19] }}
             </div>
+
+            <!-- Admin note -->
+            {% if s.admin_note %}
+            <div class="muted small mb-2" style="padding: 6px 10px;
+                 background: rgba(124,58,237,0.08); border-radius: 6px;
+                 border-left: 3px solid var(--primary-hi);">
+                💬 {{ s.admin_note }}
+            </div>
+            {% endif %}
+
+            <!-- Running stats -->
+            {% if s.running and s.status_info %}
+            <div class="muted small mb-2" style="display: flex; gap: 14px; flex-wrap: wrap;">
+                <span>⏱️ {{ s.status_info.uptime }}s</span>
+                <span>💾 {{ s.status_info.memory_mb }}MB</span>
+                <span>🆔 PID {{ s.status_info.pid }}</span>
+            </div>
+            {% endif %}
+
+            <!-- Actions -->
             <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 6px;">
-                {% if s.running %}
-                <button class="btn btn-danger btn-sm" onclick="adminAct('{{ s.id }}', 'stop')">⏹ Stop</button>
+                {% if s.status == 'pending' %}
+                    <a href="{{ url_for('admin_review_detail', sid=s.id) }}"
+                       class="btn btn-primary btn-sm" style="grid-column: span 2;">
+                        🔍 Review Now
+                    </a>
                 {% else %}
-                <button class="btn btn-primary btn-sm" onclick="adminAct('{{ s.id }}', 'start')">▶ Start</button>
+                    {% if s.running %}
+                        <button class="btn btn-danger btn-sm"
+                                onclick="adminAct('{{ s.id }}', 'stop')">
+                            ⏹ Stop
+                        </button>
+                    {% else %}
+                        <button class="btn btn-primary btn-sm"
+                                onclick="adminAct('{{ s.id }}', 'start')">
+                            ▶ Start
+                        </button>
+                    {% endif %}
+                    <button class="btn btn-ghost btn-sm"
+                            onclick="adminViewLogs('{{ s.id }}')">
+                        📜 Logs
+                    </button>
                 {% endif %}
-                <a href="{{ url_for('admin_payments') }}" class="btn btn-ghost btn-sm">💰 Payments</a>
             </div>
         </div>
         {% endfor %}
     </div>
     {% else %}
-    <p class="muted small" style="padding: 20px 0; text-align: center;">No bots hosted yet.</p>
+    <p class="muted small" style="padding: 20px 0; text-align: center;">
+        No bots hosted yet.
+    </p>
     {% endif %}
 </div>
 
+<!-- ============================================ -->
+<!-- LOG MODAL                                     -->
+<!-- ============================================ -->
+<div class="modal-backdrop" id="adminLogModal">
+    <div class="modal">
+        <div class="row-between mb-2">
+            <h3 id="adminLogTitle">📜 Live Log</h3>
+            <div class="row">
+                <button class="btn btn-ghost btn-xs" onclick="adminRefreshLog()">🔄 Refresh</button>
+                <button class="icon-btn" onclick="closeAdminModal()">✕</button>
+            </div>
+        </div>
+        <div class="log-box" id="adminLogContent" style="max-height: 500px;">Loading…</div>
+    </div>
+</div>
+
 <script>
+let adminCurrentLogSid = null;
+let adminLogRefreshInterval = null;
+
+// ============ SCRIPT CONTROLS ============
 async function adminAct(sid, action) {
-    const res = await fetch(`/admin/script/${sid}/${action}`, { method: 'POST' });
-    const data = await res.json();
-    if (data.ok) location.reload();
-    else alert(data.message || 'Failed');
+    const btn = event ? event.target : null;
+    if (btn) { btn.disabled = true; btn.style.opacity = '0.5'; }
+
+    try {
+        const res = await fetch(`/admin/script/${sid}/${action}`, { method: 'POST' });
+        const data = await res.json();
+
+        if (data.ok) {
+            location.reload();
+        } else {
+            alert(data.message || data.error || 'Action failed');
+            if (btn) { btn.disabled = false; btn.style.opacity = '1'; }
+        }
+    } catch (e) {
+        alert('Error: ' + e.message);
+        if (btn) { btn.disabled = false; btn.style.opacity = '1'; }
+    }
 }
+
+// ============ LOGS ============
+async function adminViewLogs(sid) {
+    adminCurrentLogSid = sid;
+    document.getElementById('adminLogModal').classList.add('show');
+    document.getElementById('adminLogContent').textContent = 'Loading…';
+    document.getElementById('adminLogTitle').innerHTML = '📜 Live Log';
+
+    await adminRefreshLog();
+
+    if (adminLogRefreshInterval) clearInterval(adminLogRefreshInterval);
+    adminLogRefreshInterval = setInterval(adminRefreshLog, 3000);
+}
+
+async function adminRefreshLog() {
+    if (!adminCurrentLogSid) return;
+    try {
+        const res = await fetch(`/api/script/${adminCurrentLogSid}/logs`);
+        const data = await res.json();
+
+        if (data.ok) {
+            const log = data.log || '(empty)';
+            const el = document.getElementById('adminLogContent');
+            el.textContent = log;
+            el.scrollTop = el.scrollHeight;
+
+            const st = data.status || {};
+            const statusText = st.running
+                ? `<span class="badge badge-on" style="margin-left:8px;">
+                     <span class="dot on"></span> Running
+                   </span>`
+                : `<span class="badge badge-off" style="margin-left:8px;">
+                     <span class="dot off"></span> Stopped
+                   </span>`;
+            document.getElementById('adminLogTitle').innerHTML = `📜 Live Log ${statusText}`;
+        }
+    } catch (e) {
+        console.error(e);
+    }
+}
+
+function closeAdminModal() {
+    document.getElementById('adminLogModal').classList.remove('show');
+    if (adminLogRefreshInterval) {
+        clearInterval(adminLogRefreshInterval);
+        adminLogRefreshInterval = null;
+    }
+    adminCurrentLogSid = null;
+}
+
+// ============ MODAL / KEYBOARD ============
+document.getElementById('adminLogModal').addEventListener('click', (e) => {
+    if (e.target.id === 'adminLogModal') closeAdminModal();
+});
+
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') closeAdminModal();
+});
 </script>
 {% endblock %}
