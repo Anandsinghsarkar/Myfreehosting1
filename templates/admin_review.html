@@ -1,0 +1,116 @@
+<!-- REAL_NAME: templates/admin_review.html -->
+{% extends "base.html" %}
+{% block title %}Review Queue{% endblock %}
+
+{% block content %}
+{% if mode == 'detail' %}
+    <!-- DETAIL VIEW -->
+    <div class="row-between mb-3">
+        <h1 class="page-title" style="margin:0;">🔍 Review: {{ script.name }}</h1>
+        <a href="{{ url_for('admin_review_queue') }}" class="btn btn-ghost btn-sm">← Back to Queue</a>
+    </div>
+
+    <div class="card mb-3">
+        <div class="row-between mb-2">
+            <div>
+                <strong>{{ script.name }}</strong>
+                <span class="badge badge-off">{{ script.type|upper }}</span>
+                <span class="badge badge-gold">⏳ PENDING</span>
+            </div>
+        </div>
+        <div class="muted small mb-2">
+            👤 Owner: <strong>{{ owner.name }}</strong> ({{ owner.email }})<br>
+            🆔 Script ID: <code>{{ script.id }}</code><br>
+            📅 Uploaded: {{ script.created_at[:19] }}
+        </div>
+    </div>
+
+    <!-- FILES LIST -->
+    <div class="card mb-3">
+        <h3 style="font-size: 14px; margin-bottom: 12px;">📁 Files in this upload</h3>
+        {% for f in files %}
+        <div style="display: flex; justify-content: space-between; align-items: center;
+                    padding: 10px; background: var(--bg-2); border-radius: 8px;
+                    margin-bottom: 6px; font-family: ui-monospace, monospace; font-size: 12.5px;">
+            <span style="word-break: break-all;">{{ f.rel }}</span>
+            <a href="{{ url_for('admin_review_file', sid=script.id) }}?path={{ f.rel }}"
+               class="btn btn-ghost btn-xs" download>⬇ Download</a>
+        </div>
+        {% endfor %}
+    </div>
+
+    <!-- MAIN FILE CONTENT -->
+    <div class="card mb-3">
+        <div class="row-between mb-2">
+            <h3 style="font-size: 14px;">📝 Main File: {{ script.name }}</h3>
+            <a href="{{ url_for('admin_review_file', sid=script.id) }}"
+               class="btn btn-ghost btn-xs" download>⬇ Download</a>
+        </div>
+        <pre class="log-box" style="max-height: 500px;">{{ content }}</pre>
+    </div>
+
+    <!-- APPROVE / REJECT -->
+    <div class="card">
+        <h3 style="font-size: 14px; margin-bottom: 12px;">⚡ Action</h3>
+        <form method="post" id="actionForm">
+            <label>Admin Note (optional)</label>
+            <textarea name="note" rows="3" placeholder="Reason / feedback..."
+                style="width:100%; padding:10px; background:var(--bg-1);
+                       border:1px solid var(--border); border-radius:9px;
+                       color:var(--text); font-family:inherit; font-size:13px;"></textarea>
+
+            <div style="display: flex; gap: 10px; margin-top: 14px;">
+                <button type="submit" class="btn btn-green btn-full"
+                        onclick="document.getElementById('actionForm').action='{{ url_for('admin_review_approve', sid=script.id) }}'">
+                    ✅ Approve & Allow Run
+                </button>
+                <button type="submit" class="btn btn-danger btn-full"
+                        onclick="document.getElementById('actionForm').action='{{ url_for('admin_review_reject', sid=script.id) }}'">
+                    ❌ Reject
+                </button>
+            </div>
+        </form>
+    </div>
+
+{% else %}
+    <!-- QUEUE VIEW -->
+    <div class="row-between mb-3">
+        <h1 class="page-title" style="margin:0;">⏳ Review Queue</h1>
+        <span class="badge badge-gold" style="font-size:13px; padding:6px 14px;">
+            {{ pending|length }} pending
+        </span>
+    </div>
+
+    {% if pending %}
+        <div style="display: flex; flex-direction: column; gap: 12px;">
+            {% for s in pending %}
+            <div class="card">
+                <div class="row-between mb-2">
+                    <div style="flex:1; min-width:0;">
+                        <strong style="font-size: 14px; word-break: break-all;">{{ s.name }}</strong>
+                        <span class="badge badge-off">{{ s.type|upper }}</span>
+                    </div>
+                    <span class="badge badge-gold">⏳ PENDING</span>
+                </div>
+                <div class="muted small mb-2">
+                    {% if s.user_id in users %}
+                        👤 <strong>{{ users[s.user_id].name }}</strong> · {{ users[s.user_id].email }}<br>
+                    {% endif %}
+                    🆔 {{ s.id }} · 📅 {{ s.created_at[:19] }}
+                </div>
+                <a href="{{ url_for('admin_review_detail', sid=s.id) }}"
+                   class="btn btn-primary btn-sm" style="width:100%;">
+                    🔍 Review & Decide
+                </a>
+            </div>
+            {% endfor %}
+        </div>
+    {% else %}
+        <div class="card" style="text-align: center; padding: 50px 20px;">
+            <div style="font-size: 48px; margin-bottom: 12px;">✅</div>
+            <h3>No pending reviews</h3>
+            <p class="muted small">Sab clear hai!</p>
+        </div>
+    {% endif %}
+{% endif %}
+{% endblock %}
