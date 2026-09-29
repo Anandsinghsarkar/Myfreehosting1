@@ -15,6 +15,34 @@ _bucket = None
 _initialized = False
 
 
+def _fix_private_key(cred_dict):
+    """Railway/Render env vars me \n escape issues fix karo."""
+    if 'private_key' not in cred_dict:
+        return cred_dict
+
+    pk = cred_dict['private_key']
+
+    # Case 1: Literal '\n' string → actual newline
+    if '\\n' in pk and '\n' not in pk:
+        pk = pk.replace('\\n', '\n')
+    # Case 2: Mixed — normalize all
+    else:
+        pk = pk.replace('\\n', '\n')
+
+    # Ensure proper PEM format
+    pk = pk.strip()
+    if not pk.startswith('-----BEGIN'):
+        # Try to reconstruct
+        pk = '-----BEGIN PRIVATE KEY-----\n' + pk
+    if not pk.endswith('-----'):
+        pk = pk + '\n-----END PRIVATE KEY-----\n'
+    else:
+        pk = pk + '\n'
+
+    cred_dict['private_key'] = pk
+    return cred_dict
+
+
 def init_firebase():
     global _db, _bucket, _initialized
     if _initialized:
@@ -28,11 +56,30 @@ def init_firebase():
 
     if key_json:
         try:
+            # Step 1: Parse JSON
             cred_dict = json.loads(key_json)
+            print(f"   JSON parsed. project_id: {cred_dict.get('project_id')}", flush=True)
+
+            # Step 2: Fix private_key newlines
+            cred_dict = _fix_private_key(cred_dict)
+
+            # Debug: show first/last 40 chars of private_key
+            pk = cred_dict.get('private_key', '')
+            print(f"   PK length: {len(pk)}", flush=True)
+            print(f"   PK start: {repr(pk[:40])}", flush=True)
+            print(f"   PK end:   {repr(pk[-40:])}", flush=True)
+            print(f"   PK has newlines: {chr(10) in pk}", flush=True)
+
+            # Step 3: Create credentials
             cred = credentials.Certificate(cred_dict)
-            print(f"✅ Loaded from env (project: {cred_dict.get('project_id')})", flush=True)
+            print("✅ Certificate created", flush=True)
+
+        except json.JSONDecodeError as e:
+            print(f"❌ JSON parse failed: {e}", flush=True)
+            traceback.print_exc()
+            raise
         except Exception as e:
-            print(f"❌ FIREBASE_KEY_JSON parse failed: {e}", flush=True)
+            print(f"❌ Credential failed: {e}", flush=True)
             traceback.print_exc()
             raise
     elif os.path.exists(KEY_PATH):
