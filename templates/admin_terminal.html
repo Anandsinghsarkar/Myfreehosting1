@@ -1,0 +1,232 @@
+<!-- REAL_NAME: templates/admin_terminal.html -->
+{% extends "base.html" %}
+{% block title %}Admin Terminal{% endblock %}
+
+{% block content %}
+<div class="row-between mb-3">
+    <h1 class="page-title" style="margin:0;">💻 Admin Terminal</h1>
+    <div class="row">
+        <button class="btn btn-ghost btn-sm" onclick="clearTerminal()">🧹 Clear</button>
+        <button class="btn btn-danger btn-sm" onclick="abortCommand()">⏹ Abort</button>
+    </div>
+</div>
+
+<div class="info-box" style="margin-bottom: 12px;">
+    ⚠️ <strong>Warning:</strong> Ye ek real terminal hai. Jo bhi command chalao, server pe chalti hai.
+    <code>cd</code>, <code>pwd</code>, <code>clear</code>, <code>pip install</code>, <code>ls</code>, <code>cat</code>, etc. sab supported.
+</div>
+
+<div class="card" style="padding: 0; overflow: hidden;">
+    <div id="terminal" style="
+        background: #050810;
+        padding: 16px;
+        min-height: 500px;
+        max-height: 70vh;
+        overflow-y: auto;
+        font-family: 'JetBrains Mono', ui-monospace, monospace;
+        font-size: 13px;
+        line-height: 1.5;
+        color: #b9c2d4;
+        white-space: pre-wrap;
+        word-break: break-all;
+    "></div>
+</div>
+
+<form id="cmdForm" onsubmit="return false;" style="margin-top: 12px;">
+    <div style="display: flex; gap: 8px;">
+        <span id="promptPrefix" style="
+            padding: 10px 12px;
+            background: var(--bg-3);
+            border: 1px solid var(--border);
+            border-radius: 9px;
+            color: var(--primary-hi);
+            font-family: ui-monospace, monospace;
+            font-size: 12px;
+            white-space: nowrap;
+            max-width: 200px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        ">$</span>
+        <input type="text" id="cmdInput"
+               placeholder="Command likho (jaise: pip install requests)"
+               autocomplete="off" autocapitalize="off" spellcheck="false"
+               style="flex:1; padding:10px 14px; background:var(--bg-1);
+                      border:1px solid var(--border); border-radius:9px;
+                      color:var(--text); font-size:14px;
+                      font-family: ui-monospace, monospace;">
+        <button type="button" class="btn btn-primary" onclick="sendCommand()" id="sendBtn">
+            ▶ Run
+        </button>
+    </div>
+</form>
+
+<div class="muted small" style="margin-top: 8px; font-size: 11.5px;">
+    💡 Tip: <code>↑</code> / <code>↓</code> arrow keys se command history dekho
+</div>
+
+<style>
+.term-line { display: block; }
+.term-line.input { color: #a855f7; }
+.term-line.error { color: #fca5a5; }
+.term-line.success { color: #6ee7b7; }
+.term-line.info { color: #22d3ee; }
+</style>
+
+<script>
+const term = document.getElementById('terminal');
+const input = document.getElementById('cmdInput');
+const sendBtn = document.getElementById('sendBtn');
+const promptPrefix = document.getElementById('promptPrefix');
+
+let history = [];
+let historyIdx = -1;
+let isRunning = false;
+
+// ========== PRINT HELPERS ==========
+function printLine(text, cls = '') {
+    const line = document.createElement('span');
+    line.className = 'term-line ' + cls;
+    line.textContent = text;
+    term.appendChild(line);
+    term.appendChild(document.createTextNode('\n'));
+    term.scrollTop = term.scrollHeight;
+}
+
+function printRaw(text) {
+    const span = document.createElement('span');
+    span.textContent = text;
+    term.appendChild(span);
+    term.scrollTop = term.scrollHeight;
+}
+
+function clearTerminal() {
+    term.innerHTML = '';
+    printLine('🚀 Terminal cleared', 'info');
+}
+
+function setPrompt(cwd) {
+    promptPrefix.textContent = cwd.length > 30 ? '...' + cwd.slice(-27) : cwd;
+    promptPrefix.title = cwd;
+}
+
+// ========== INITIAL WELCOME ==========
+(function initWelcome() {
+    printLine('╔══════════════════════════════════════════════════╗', 'info');
+    printLine('║       A7 Hosting — Admin Web Terminal           ║', 'info');
+    printLine('╚══════════════════════════════════════════════════╝', 'info');
+    printLine('');
+    printLine('Type any shell command. Try: ls, pwd, pip list, cat app.py');
+    printLine('');
+
+    // Load history
+    fetch('/admin/terminal/history')
+        .then(r => r.json())
+        .then(d => { if (d.ok) history = d.history || []; })
+        .catch(() => {});
+
+    // Initial prompt
+    fetch('/admin/terminal/exec', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ command: 'pwd' })
+    })
+    .then(r => r.json())
+    .then(d => {
+        if (d.ok) {
+            d.events.forEach(e => {
+                if (e.type === 'output') printRaw(e.data);
+                if (e.type === 'prompt') setPrompt(e.cwd);
+            });
+        }
+    });
+
+    input.focus();
+})();
+
+// ========== SEND COMMAND ==========
+async function sendCommand() {
+    if (isRunning) return;
+    const cmd = input.value.trim();
+    if (!cmd) return;
+
+    // Echo
+    printLine('$ ' + cmd, 'input');
+    input.value = '';
+
+    // History
+    if (cmd && history[history.length - 1] !== cmd) {
+        history.push(cmd);
+    }
+    historyIdx = history.length;
+
+    isRunning = true;
+    sendBtn.disabled = true;
+    sendBtn.innerHTML = '<span class="spinner"></span>';
+
+    try {
+        const res = await fetch('/admin/terminal/exec', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ command: cmd })
+        });
+        const data = await res.json();
+
+        if (!data.ok) {
+            printLine('❌ ' + (data.error || 'Error'), 'error');
+            return;
+        }
+
+        for (const ev of data.events) {
+            if (ev.type === 'output') printRaw(ev.data);
+            else if (ev.type === 'error') printRaw(ev.data);
+            else if (ev.type === 'clear') term.innerHTML = '';
+            else if (ev.type === 'prompt') setPrompt(ev.cwd);
+        }
+
+    } catch (e) {
+        printLine('❌ ' + e.message, 'error');
+    } finally {
+        isRunning = false;
+        sendBtn.disabled = false;
+        sendBtn.innerHTML = '▶ Run';
+        input.focus();
+    }
+}
+
+async function abortCommand() {
+    if (!isRunning) return;
+    try {
+        await fetch('/admin/terminal/abort', { method: 'POST' });
+    } catch (e) {}
+}
+
+// ========== KEYBOARD ==========
+input.addEventListener('keydown', e => {
+    if (e.key === 'Enter') {
+        e.preventDefault();
+        sendCommand();
+    } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        if (historyIdx > 0) {
+            historyIdx--;
+            input.value = history[historyIdx] || '';
+        }
+    } else if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        if (historyIdx < history.length - 1) {
+            historyIdx++;
+            input.value = history[historyIdx] || '';
+        } else {
+            historyIdx = history.length;
+            input.value = '';
+        }
+    } else if (e.key === 'l' && e.ctrlKey) {
+        e.preventDefault();
+        clearTerminal();
+    }
+});
+
+// ========== AUTO-FOCUS ==========
+document.addEventListener('click', () => input.focus());
+</script>
+{% endblock %}
