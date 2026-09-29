@@ -1,3 +1,4 @@
+# REAL_NAME: db.py
 # -*- coding: utf-8 -*-
 import os
 from datetime import datetime, timedelta
@@ -14,7 +15,8 @@ def _now():
     return datetime.utcnow().isoformat()
 
 
-# --- USERS ---
+# ==================== USERS ====================
+
 def get_user(uid):
     db = get_db()
     doc = db.collection('users').document(uid).get()
@@ -95,13 +97,21 @@ def count_users():
     return len(list(db.collection('users').stream()))
 
 
-# --- SCRIPTS ---
-def add_script(sid, user_id, name, stype, storage_path=''):
+# ==================== SCRIPTS (with approval) ====================
+# status field:
+#   'pending'   → admin approval pending
+#   'approved'  → approved, can be started
+#   'rejected'  → rejected by admin
+#   'running'   → currently running
+#   'stopped'   → stopped after running
+
+def add_script(sid, user_id, name, stype, storage_path='', status='pending'):
     db = get_db()
     db.collection('scripts').document(sid).set({
         'user_id': user_id,
         'name': name,
         'type': stype,
+        'status': status,
         'running': False,
         'storage_path': storage_path,
         'created_at': _now(),
@@ -119,11 +129,13 @@ def get_script(sid):
     return None
 
 
-def list_scripts(user_id=None):
+def list_scripts(user_id=None, status=None):
     db = get_db()
     q = db.collection('scripts')
     if user_id:
         q = q.where('user_id', '==', user_id)
+    if status:
+        q = q.where('status', '==', status)
     items = []
     for doc in q.stream():
         d = doc.to_dict()
@@ -133,9 +145,31 @@ def list_scripts(user_id=None):
     return items
 
 
+def list_pending_scripts():
+    return list_scripts(status='pending')
+
+
 def update_script(sid, data):
     db = get_db()
     db.collection('scripts').document(sid).update(data)
+
+
+def approve_script(sid, admin_uid, note=''):
+    update_script(sid, {
+        'status': 'approved',
+        'approved_by': admin_uid,
+        'approved_at': _now(),
+        'admin_note': note,
+    })
+
+
+def reject_script(sid, admin_uid, note=''):
+    update_script(sid, {
+        'status': 'rejected',
+        'rejected_by': admin_uid,
+        'rejected_at': _now(),
+        'admin_note': note,
+    })
 
 
 def delete_script(sid):
@@ -147,7 +181,8 @@ def count_scripts(user_id):
     return len(list_scripts(user_id))
 
 
-# --- PAYMENTS ---
+# ==================== PAYMENTS ====================
+
 def add_payment(user_id, amount, method, status, note='', screenshot_url=''):
     db = get_db()
     pid = db.collection('payments').document().id
@@ -182,7 +217,8 @@ def update_payment_status(pid, status):
     db.collection('payments').document(pid).update({'status': status})
 
 
-# --- SETTINGS ---
+# ==================== SETTINGS ====================
+
 DEFAULT_SETTINGS = {
     'pricing': {
         'free': {'price': 0, 'bots': 2, 'days': 0},
@@ -196,6 +232,7 @@ DEFAULT_SETTINGS = {
     'offer_text': 'Get 50% OFF on Premium Plan',
     'support_contact': '@a7hosting',
     'payment_note': 'Payment ke baad screenshot admin ko bhejo.',
+    'auto_approve': False,   # agar True, direct approved
 }
 
 
@@ -215,7 +252,8 @@ def update_settings(data):
     db.collection('settings').document('global').set(data, merge=True)
 
 
-# --- INSTALL LOGS ---
+# ==================== INSTALL LOGS ====================
+
 def log_install(user_id, module, status, log):
     try:
         db = get_db()
