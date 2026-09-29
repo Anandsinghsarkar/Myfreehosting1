@@ -1,3 +1,4 @@
+# REAL_NAME: app.py
 # -*- coding: utf-8 -*-
 import os, sys, re, zipfile, tempfile, shutil, subprocess, uuid
 from functools import wraps
@@ -10,11 +11,13 @@ from werkzeug.utils import secure_filename
 import db
 import runner
 import storage_helper
+import terminal
 from firebase_config import init_firebase
 from firebase_admin import auth as fb_auth
 
+# --- Config ---
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
-UPLOAD_DIR = os.path.join(BASE_DIR, 'uploads')
+UPLOAD_DIR = os.environ.get('UPLOAD_DIR', os.path.join(BASE_DIR, 'uploads'))
 MAX_FILE_SIZE = 20 * 1024 * 1024
 ALLOWED_EXT = {'.py', '.js', '.zip'}
 os.makedirs(UPLOAD_DIR, exist_ok=True)
@@ -74,10 +77,8 @@ def admin_required(f):
     return w
 
 
-# --- Security (DISABLED) ---
+# --- Security (disabled for host-any-file) ---
 DANGEROUS = []
-
-
 def scan_code(text):
     return True, None
 
@@ -133,12 +134,15 @@ def dashboard():
     user = current_user()
     scripts = db.list_scripts(user['uid'])
     for s in scripts:
-        s['status'] = runner.get_status(s['id'])
-        s['running'] = s['status'].get('running', False)
+        s['status_info'] = runner.get_status(s['id'])
+        s['running'] = s['status_info'].get('running', False)
     running_count = sum(1 for s in scripts if s['running'])
     total_users = db.count_users()
+    pending_count = len(db.list_pending_scripts()) if user.get('is_admin') else 0
+
     return render_template('dashboard.html', user=user, scripts=scripts,
                            running_count=running_count, total_users=total_users,
+                           pending_count=pending_count,
                            fb_config=FIREBASE_WEB_CONFIG)
 
 
@@ -148,8 +152,8 @@ def my_bots():
     user = current_user()
     scripts = db.list_scripts(user['uid'])
     for s in scripts:
-        s['status'] = runner.get_status(s['id'])
-        s['running'] = s['status'].get('running', False)
+        s['status_info'] = runner.get_status(s['id'])
+        s['running'] = s['status_info'].get('running', False)
     return render_template('my_bots.html', user=user, scripts=scripts,
                            fb_config=FIREBASE_WEB_CONFIG)
 
@@ -181,15 +185,14 @@ def upload():
     sdir = runner.get_script_dir(user['uid'], sid)
     os.makedirs(sdir, exist_ok=True)
 
-    # Handle requirements (file or text)
+    # Handle requirements
     req_content = None
     req_file = request.files.get('requirements')
     if req_file and req_file.filename:
         try:
             req_content = req_file.read().decode('utf-8', errors='ignore')
-        except Exception as e:
-            print(f"⚠️ Req file read failed: {e}")
-
+        except Exception:
+            pass
     if not req_content:
         req_text = request.form.get('requirements_text', '').strip()
         if req_text:
@@ -197,12 +200,10 @@ def upload():
 
     if req_content and req_content.strip():
         try:
-            req_path = os.path.join(sdir, 'requirements.txt')
-            with open(req_path, 'w', encoding='utf-8') as rf:
+            with open(os.path.join(sdir, 'requirements.txt'), 'w', encoding='utf-8') as rf:
                 rf.write(req_content)
-            print(f"✅ Saved requirements.txt for {sid}")
-        except Exception as e:
-            print(f"⚠️ Req save failed: {e}")
+        except Exception:
+            pass
 
     if ext == '.zip':
         return _handle_zip(f, user, sid, sdir)
@@ -214,44 +215,20 @@ def _handle_single(f, user, sid, sdir, filename, ext):
     if len(content) > MAX_FILE_SIZE:
         return jsonify({'ok': False, 'error': 'Too large'}), 400
 
-    try:
-        text = content.decode('utf-8', errors='ignore')
-        ok, pat = scan_code(text)
-        if not ok:
-            return jsonify({'ok': False, 'error': f'Dangerous: {pat}'}), 400
-    except Exception:
-        pass
-
     local_path = os.path.join(sdir, filename)
     with open(local_path, 'wb') as out:
         out.write(content)
 
-    # Auto-install requirements (agar upload kiya)
-    req_path = os.path.join(sdir, 'requirements.txt')
-    if os.path.exists(req_path) and ext == '.py':
-        try:
-            print(f"🔄 Installing requirements for {sid}")
-            r = subprocess.run(
-                [sys.executable, '-m', 'pip', 'install', '--no-cache-dir', '-r', req_path],
-                cwd=sdir, capture_output=True, text=True,
-                encoding='utf-8', errors='ignore', timeout=300
-            )
-            print(f"pip rc={r.returncode}")
-        except Exception as e:
-            print(f"⚠️ Req install failed: {e}")
+    # Upload to storage
+    storage_helper.upload_script_file(local_path, user['uid'], sid, filename)
 
-    storage_path = storage_helper.upload_script_file(
-        local_path, user['uid'], sid, filename
-    ) or sdir
+    # Save to DB as PENDING
+    settings = db.get_settings()
+    initial_status = 'approved' if settings.get('auto_approve') else 'pending'
+    db.add_script(sid, user['uid'], filename, ext[1:], sdir, status=initial_status)
 
-    if os.path.exists(req_path):
-        try:
-            storage_helper.upload_script_file(req_path, user['uid'], sid, 'requirements.txt')
-        except Exception:
-            pass
-
-    db.add_script(sid, user['uid'], filename, ext[1:], storage_path)
-    return jsonify({'ok': True, 'sid': sid})
+    msg = "Uploaded! Admin approval ka wait karo." if initial_status == 'pending' else "Uploaded & approved!"
+    return jsonify({'ok': True, 'sid': sid, 'status': initial_status, 'message': msg})
 
 
 def _handle_zip(f, user, sid, sdir):
@@ -294,38 +271,49 @@ def _handle_zip(f, user, sid, sdir):
             elif os.path.exists(dst): os.remove(dst)
             shutil.move(src, dst)
 
-        req = os.path.join(sdir, 'requirements.txt')
-        if os.path.exists(req):
-            try:
-                subprocess.run([sys.executable, '-m', 'pip', 'install',
-                                '--no-cache-dir', '-r', req],
-                               cwd=sdir, capture_output=True, timeout=300)
-            except Exception:
-                pass
-
         storage_helper.upload_script_folder(sdir, user['uid'], sid)
-        db.add_script(sid, user['uid'], main, main_type, sdir)
-        return jsonify({'ok': True, 'sid': sid})
+
+        settings = db.get_settings()
+        initial_status = 'approved' if settings.get('auto_approve') else 'pending'
+        db.add_script(sid, user['uid'], main, main_type, sdir, status=initial_status)
+
+        msg = "Uploaded! Admin approval ka wait karo." if initial_status == 'pending' else "Uploaded & approved!"
+        return jsonify({'ok': True, 'sid': sid, 'status': initial_status, 'message': msg})
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
+
+
+# ========== API: Start / Stop / Restart / Logs / Delete ==========
+
+def _get_script_for_user(sid, user):
+    s = db.get_script(sid)
+    if not s:
+        return None, ('Not found', 404)
+    if s['user_id'] != user['uid'] and not user.get('is_admin'):
+        return None, ('Forbidden', 403)
+    return s, None
 
 
 @app.route('/api/script/<sid>/start', methods=['POST'])
 @login_required
 def api_start(sid):
     user = current_user()
-    s = db.get_script(sid)
-    if not s: return jsonify({'ok': False, 'error': 'Not found'}), 404
-    if s['user_id'] != user['uid'] and not user.get('is_admin'):
-        return jsonify({'ok': False, 'error': 'Forbidden'}), 403
+    s, err = _get_script_for_user(sid, user)
+    if err: return jsonify({'ok': False, 'error': err[0]}), err[1]
+
+    if s.get('status') != 'approved':
+        return jsonify({'ok': False, 'error': f"Script status: {s.get('status')} — admin approval required"}), 400
+
     sdir = runner.get_script_dir(s['user_id'], sid)
     fpath = os.path.join(sdir, s['name'])
     if not os.path.exists(fpath):
         storage_helper.download_script_folder(s['user_id'], sid, sdir)
     if not os.path.exists(fpath):
         return jsonify({'ok': False, 'error': 'File missing'}), 400
+
     ok, msg = runner.start_script(sid, s['user_id'], fpath, s['type'])
-    if ok: db.update_script(sid, {'running': True})
+    if ok:
+        db.update_script(sid, {'running': True, 'status': 'running'})
     return jsonify({'ok': ok, 'message': msg})
 
 
@@ -333,12 +321,12 @@ def api_start(sid):
 @login_required
 def api_stop(sid):
     user = current_user()
-    s = db.get_script(sid)
-    if not s: return jsonify({'ok': False}), 404
-    if s['user_id'] != user['uid'] and not user.get('is_admin'):
-        return jsonify({'ok': False}), 403
+    s, err = _get_script_for_user(sid, user)
+    if err: return jsonify({'ok': False}), err[1]
+
     ok, msg = runner.stop_script(sid)
-    if ok: db.update_script(sid, {'running': False})
+    if ok:
+        db.update_script(sid, {'running': False, 'status': 'stopped'})
     return jsonify({'ok': ok, 'message': msg})
 
 
@@ -346,16 +334,20 @@ def api_stop(sid):
 @login_required
 def api_restart(sid):
     user = current_user()
-    s = db.get_script(sid)
-    if not s: return jsonify({'ok': False}), 404
-    if s['user_id'] != user['uid'] and not user.get('is_admin'):
-        return jsonify({'ok': False}), 403
+    s, err = _get_script_for_user(sid, user)
+    if err: return jsonify({'ok': False}), err[1]
+
+    if s.get('status') not in ('approved', 'running', 'stopped'):
+        return jsonify({'ok': False, 'error': 'Not approved'}), 400
+
     runner.stop_script(sid)
     sdir = runner.get_script_dir(s['user_id'], sid)
     fpath = os.path.join(sdir, s['name'])
     if not os.path.exists(fpath):
         storage_helper.download_script_folder(s['user_id'], sid, sdir)
     ok, msg = runner.start_script(sid, s['user_id'], fpath, s['type'])
+    if ok:
+        db.update_script(sid, {'running': True, 'status': 'running'})
     return jsonify({'ok': ok, 'message': msg})
 
 
@@ -363,10 +355,8 @@ def api_restart(sid):
 @login_required
 def api_logs(sid):
     user = current_user()
-    s = db.get_script(sid)
-    if not s: return jsonify({'ok': False}), 404
-    if s['user_id'] != user['uid'] and not user.get('is_admin'):
-        return jsonify({'ok': False}), 403
+    s, err = _get_script_for_user(sid, user)
+    if err: return jsonify({'ok': False}), err[1]
     log = runner.read_log(sid, s['user_id'])
     status = runner.get_status(sid)
     return jsonify({'ok': True, 'log': log, 'status': status})
@@ -376,10 +366,8 @@ def api_logs(sid):
 @login_required
 def api_delete(sid):
     user = current_user()
-    s = db.get_script(sid)
-    if not s: return jsonify({'ok': False}), 404
-    if s['user_id'] != user['uid'] and not user.get('is_admin'):
-        return jsonify({'ok': False}), 403
+    s, err = _get_script_for_user(sid, user)
+    if err: return jsonify({'ok': False}), err[1]
     runner.stop_script(sid)
     sdir = runner.get_script_dir(s['user_id'], sid)
     shutil.rmtree(sdir, ignore_errors=True)
@@ -388,51 +376,169 @@ def api_delete(sid):
     return jsonify({'ok': True})
 
 
-@app.route('/pricing')
-def pricing():
+# ========== ADMIN: Review Queue ==========
+
+@app.route('/admin/review')
+@admin_required
+def admin_review_queue():
     user = current_user()
-    settings = db.get_settings()
-    return render_template('pricing.html', user=user, settings=settings,
+    pending = db.list_pending_scripts()
+    users_map = {u['uid']: u for u in db.list_users()}
+    return render_template('admin_review.html',
+                           user=user,
+                           pending=pending,
+                           users=users_map,
                            fb_config=FIREBASE_WEB_CONFIG)
 
 
-@app.route('/docs')
-def docs():
+@app.route('/admin/review/<sid>')
+@admin_required
+def admin_review_detail(sid):
     user = current_user()
-    return render_template('docs.html', user=user, fb_config=FIREBASE_WEB_CONFIG)
+    s = db.get_script(sid)
+    if not s:
+        abort(404)
+    owner = db.get_user(s['user_id'])
+    sdir = runner.get_script_dir(s['user_id'], sid)
+
+    # Read main file content
+    main_path = os.path.join(sdir, s['name'])
+    content = ''
+    if os.path.exists(main_path):
+        try:
+            with open(main_path, 'r', encoding='utf-8', errors='ignore') as fh:
+                content = fh.read()
+        except Exception:
+            content = '(unable to read)'
+
+    # List all files in folder
+    files = []
+    for root, dirs, files_in_dir in os.walk(sdir):
+        for fn in files_in_dir:
+            fp = os.path.join(root, fn)
+            rel = os.path.relpath(fp, sdir)
+            try:
+                sz = os.path.getsize(fp)
+            except Exception:
+                sz = 0
+            files.append({'rel': rel, 'size': sz, 'abs': fp})
+
+    return render_template('admin_review.html',
+                           user=user, script=s, owner=owner,
+                           content=content, files=files,
+                           fb_config=FIREBASE_WEB_CONFIG,
+                           mode='detail')
 
 
-@app.route('/support')
-def support():
+@app.route('/admin/review/<sid>/file')
+@admin_required
+def admin_review_file(sid):
+    """Serve a specific file for download/preview."""
     user = current_user()
-    settings = db.get_settings()
-    return render_template('support.html', user=user, settings=settings,
+    s = db.get_script(sid)
+    if not s:
+        abort(404)
+    rel = request.args.get('path', s['name'])
+    sdir = runner.get_script_dir(s['user_id'], sid)
+    fpath = os.path.join(sdir, rel)
+    if not os.path.exists(fpath):
+        abort(404)
+    return send_file(fpath, as_attachment=True,
+                     download_name=os.path.basename(rel))
+
+
+@app.route('/admin/review/<sid>/approve', methods=['POST'])
+@admin_required
+def admin_review_approve(sid):
+    user = current_user()
+    s = db.get_script(sid)
+    if not s:
+        abort(404)
+    note = request.form.get('note', '')
+    db.approve_script(sid, user['uid'], note)
+    flash(f"✅ Approved: {s['name']}", "success")
+    return redirect(url_for('admin_review_queue'))
+
+
+@app.route('/admin/review/<sid>/reject', methods=['POST'])
+@admin_required
+def admin_review_reject(sid):
+    user = current_user()
+    s = db.get_script(sid)
+    if not s:
+        abort(404)
+    note = request.form.get('note', '')
+    db.reject_script(sid, user['uid'], note)
+    flash(f"❌ Rejected: {s['name']}", "success")
+    return redirect(url_for('admin_review_queue'))
+
+
+# ========== ADMIN: Terminal ==========
+
+@app.route('/admin/terminal')
+@admin_required
+def admin_terminal_page():
+    user = current_user()
+    return render_template('admin_terminal.html',
+                           user=user,
                            fb_config=FIREBASE_WEB_CONFIG)
 
 
-@app.route('/payment-history')
-@login_required
-def payment_history():
+@app.route('/admin/terminal/exec', methods=['POST'])
+@admin_required
+def admin_terminal_exec():
+    """Execute a command in the terminal."""
     user = current_user()
-    payments = db.list_payments(user['uid'])
-    settings = db.get_settings()
-    return render_template('payment_history.html', user=user, payments=payments,
-                           settings=settings, fb_config=FIREBASE_WEB_CONFIG)
+    data = request.get_json() or {}
+    command = data.get('command', '').strip()
+    sid = f"admin_{user['uid']}"
+
+    if not command:
+        return jsonify({'ok': False, 'error': 'Empty command'}), 400
+
+    lines = []
+    try:
+        for event in terminal.run_command(sid, command):
+            lines.append(event)
+        return jsonify({'ok': True, 'events': lines})
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e)}), 500
 
 
-# ========== ADMIN ==========
+@app.route('/admin/terminal/abort', methods=['POST'])
+@admin_required
+def admin_terminal_abort():
+    user = current_user()
+    sid = f"admin_{user['uid']}"
+    terminal.abort_current(sid)
+    return jsonify({'ok': True})
+
+
+@app.route('/admin/terminal/history')
+@admin_required
+def admin_terminal_history():
+    user = current_user()
+    sid = f"admin_{user['uid']}"
+    return jsonify({'ok': True, 'history': terminal.get_history(sid)})
+
+
+# ========== ADMIN: Dashboard / Users / Payments ==========
+
 @app.route('/admin')
 @admin_required
 def admin_dashboard():
     user = current_user()
     users = db.list_users()
     scripts = db.list_scripts()
+    pending = db.list_pending_scripts()
     for u in users:
         u['script_count'] = db.count_scripts(u['uid'])
     for s in scripts:
-        s['status'] = runner.get_status(s['id'])
-        s['running'] = s['status'].get('running', False)
+        s['status_info'] = runner.get_status(s['id'])
+        s['running'] = s['status_info'].get('running', False)
     return render_template('admin.html', user=user, users=users, scripts=scripts,
+                           pending=pending,
+                           pending_count=len(pending),
                            running_count=sum(1 for s in scripts if s['running']),
                            fb_config=FIREBASE_WEB_CONFIG)
 
@@ -488,8 +594,7 @@ def admin_delete_user(uid):
 def admin_payments():
     user = current_user()
     payments = db.list_payments()
-    users_list = db.list_users()
-    users_map = {u['uid']: u for u in users_list}
+    users_map = {u['uid']: u for u in db.list_users()}
     settings = db.get_settings()
     return render_template('admin_payments.html', user=user, payments=payments,
                            users=users_map, settings=settings,
@@ -551,6 +656,7 @@ def admin_update_pricing():
             'offer_text': request.form.get('offer_text', '').strip(),
             'support_contact': request.form.get('support_contact', '').strip(),
             'payment_note': request.form.get('payment_note', '').strip(),
+            'auto_approve': request.form.get('auto_approve') == 'on',
         }
 
         qr_file = request.files.get('qr_image')
@@ -564,7 +670,6 @@ def admin_update_pricing():
                 )
                 if url:
                     data['qr_code_url'] = url
-                    flash("QR uploaded ✅", "success")
             finally:
                 shutil.rmtree(tmp_dir, ignore_errors=True)
 
@@ -575,6 +680,7 @@ def admin_update_pricing():
     return redirect(url_for('admin_payments'))
 
 
+# ========== ADMIN: Script controls ==========
 @app.route('/admin/script/<sid>/start', methods=['POST'])
 @admin_required
 def admin_start(sid):
@@ -587,6 +693,8 @@ def admin_start(sid):
     if not os.path.exists(fpath):
         return jsonify({'ok': False, 'error': 'File missing'}), 400
     ok, msg = runner.start_script(sid, s['user_id'], fpath, s['type'])
+    if ok:
+        db.update_script(sid, {'running': True, 'status': 'running'})
     return jsonify({'ok': ok, 'message': msg})
 
 
@@ -594,7 +702,42 @@ def admin_start(sid):
 @admin_required
 def admin_stop(sid):
     ok, msg = runner.stop_script(sid)
+    if ok:
+        db.update_script(sid, {'running': False, 'status': 'stopped'})
     return jsonify({'ok': ok, 'message': msg})
+
+
+# ========== PUBLIC PAGES ==========
+@app.route('/pricing')
+def pricing():
+    user = current_user()
+    settings = db.get_settings()
+    return render_template('pricing.html', user=user, settings=settings,
+                           fb_config=FIREBASE_WEB_CONFIG)
+
+
+@app.route('/docs')
+def docs():
+    user = current_user()
+    return render_template('docs.html', user=user, fb_config=FIREBASE_WEB_CONFIG)
+
+
+@app.route('/support')
+def support():
+    user = current_user()
+    settings = db.get_settings()
+    return render_template('support.html', user=user, settings=settings,
+                           fb_config=FIREBASE_WEB_CONFIG)
+
+
+@app.route('/payment-history')
+@login_required
+def payment_history():
+    user = current_user()
+    payments = db.list_payments(user['uid'])
+    settings = db.get_settings()
+    return render_template('payment_history.html', user=user, payments=payments,
+                           settings=settings, fb_config=FIREBASE_WEB_CONFIG)
 
 
 import atexit
