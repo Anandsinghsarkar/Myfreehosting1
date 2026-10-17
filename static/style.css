@@ -1045,3 +1045,41 @@ label {
 @media (min-width: 1200px) {
     .topnav .nav-links { display: flex; }
 }
+
+
+/* ============ ANDROID / MOBILE ADMIN FIXES ============ */
+@media (max-width: 899px) {
+    html, body { width: 100%; max-width: 100%; overflow-x: hidden; }
+    .topnav { position: sticky; top: 0; z-index: 1200; padding-left: 12px; padding-right: 12px; gap: 8px; }
+    .topnav .logo { min-width: 0; flex-shrink: 0; }
+    .topnav .logo-text { font-size: 14px; }
+    .topnav .nav-links { display: none !important; }
+    .layout { display: block !important; width: 100%; min-width: 0; padding-bottom: calc(78px + env(safe-area-inset-bottom)); }
+    .sidebar { display: none !important; }
+    .content { width: 100%; min-width: 0; max-width: 100%; padding: 14px 12px calc(24px + env(safe-area-inset-bottom)); overflow-x: clip; }
+    .page-title { font-size: clamp(19px, 5vw, 25px); line-height: 1.25; overflow-wrap: anywhere; }
+    .card { width: 100%; min-width: 0; padding: 14px; margin-bottom: 14px; }
+    .card-header, .row-between { align-items: flex-start; flex-wrap: wrap; }
+    .card-header > *, .row-between > * { min-width: 0; max-width: 100%; }
+    .btn { min-height: 42px; max-width: 100%; white-space: normal; overflow-wrap: anywhere; justify-content: center; }
+    .btn-sm, .btn-xs { min-height: 38px; }
+    .stats-row { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; gap: 8px; }
+    .stat-card { min-width: 0; padding: 12px 10px; }
+    .stat-body .value { font-size: 19px; }
+    .table-wrapper { max-width: 100%; overflow-x: auto; }
+    .table { min-width: 560px; }
+    input, select, textarea, button { max-width: 100%; }
+    .bottomnav { display: flex !important; position: fixed; left: 0; right: 0; bottom: 0; z-index: 1500; width: 100%; padding: 7px 4px calc(7px + env(safe-area-inset-bottom)); gap: 2px; box-sizing: border-box; }
+    .bottomnav-link { flex: 1 1 0; min-width: 0; padding: 7px 2px; gap: 3px; }
+    .bn-label { font-size: 10px; }
+    .modal-backdrop { align-items: flex-end; padding: 0; }
+    .modal { width: 100%; max-width: 100%; max-height: 88dvh; overflow-y: auto; border-radius: 18px 18px 0 0; padding: 16px 12px calc(20px + env(safe-area-inset-bottom)); }
+    pre, code, .log-box { max-width: 100%; overflow-x: auto; overflow-wrap: anywhere; }
+    form { min-width: 0; }
+}
+@media (max-width: 380px) {
+    .content { padding-left: 9px; padding-right: 9px; }
+    .card { padding: 11px; }
+    .stats-row { gap: 6px; }
+    .bottomnav-link .bn-label { font-size: 9px; }
+}
