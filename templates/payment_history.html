@@ -5,15 +5,18 @@
 <div class="card">
 {% if payments %}
 <table class="table">
-    <thead><tr><th>Date</th><th>Amount</th><th>Method</th><th>Status</th></tr></thead>
+    <thead><tr><th>Date</th><th>Package</th><th>Amount</th><th>Method</th><th>Reference</th><th>Status</th></tr></thead>
     <tbody>
     {% for p in payments %}
     <tr>
         <td class="muted small">{{ p.created_at[:19] }}</td>
+        <td>{{ p.plan_name or 'Manual payment' }}{% if p.days %}<div class="muted small">{{ p.days }} days · {{ p.bots }} bots</div>{% endif %}</td>
         <td><strong>₹{{ '%.2f'|format(p.amount) }}</strong></td>
         <td>{{ p.method }}</td>
+        <td class="muted small" style="word-break:break-word;">{{ p.note or '—' }}</td>
         <td>
-            {% if p.status == 'success' %}<span class="badge badge-on">Success</span>
+            {% if p.status == 'success' %}<span class="badge badge-on">Approved</span>
+            {% elif p.status == 'pending' %}<span class="badge badge-off">Pending review</span>
             {% else %}<span class="badge badge-off">{{ p.status }}</span>{% endif %}
         </td>
     </tr>
@@ -23,5 +26,7 @@
 {% else %}
 <p class="muted" style="text-align:center;padding:40px 0;">No payments yet.</p>
 {% endif %}
+<p class="muted small" style="margin-top:14px;">UPI requests stay pending until admin checks the transaction reference and approves them.</p>
+<a class="btn btn-ghost" href="{{ url_for('pricing') }}">View Packages</a>
 </div>
 {% endblock %}
