@@ -711,6 +711,7 @@ def admin_update_pricing():
             plans.append(plan)
             legacy_pricing[plan_id] = {'price': price, 'bots': bots, 'days': days, 'name': name}
 
+        current_settings = db.get_settings()
         data = {
             'plans': plans,
             'pricing': legacy_pricing,
@@ -720,7 +721,7 @@ def admin_update_pricing():
             'offer_text': request.form.get('offer_text', '').strip()[:250],
             'support_contact': request.form.get('support_contact', '').strip()[:120],
             'payment_note': request.form.get('payment_note', '').strip()[:1000],
-            'auto_approve': False,
+            'auto_approve': current_settings.get('auto_approve', False),
         }
 
         qr_file = request.files.get('qr_image')
