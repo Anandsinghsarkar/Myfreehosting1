@@ -22,23 +22,24 @@ def upload_script_file(local_path, user_id, script_id, filename):
 
 
 def upload_script_folder(local_dir, user_id, script_id):
+    """Best-effort mirror; return partial results so later deletion can clean them up."""
+    uploaded = {}
     try:
         bucket = get_bucket()
         if not bucket:
             return {}
-        uploaded = {}
         for root, dirs, files in os.walk(local_dir):
             for fn in files:
                 local_file = os.path.join(root, fn)
-                rel = os.path.relpath(local_file, local_dir).replace('\\', '/')
+                rel = os.path.relpath(local_file, local_dir).replace('\\\\', '/')
                 blob_path = f"scripts/{user_id}/{script_id}/{rel}"
                 bucket.blob(blob_path).upload_from_filename(local_file)
                 uploaded[rel] = blob_path
         print(f"✅ Uploaded {len(uploaded)} files for {script_id}")
         return uploaded
     except Exception as e:
-        print(f"❌ Folder upload failed: {e}")
-        return {}
+        print(f"❌ Folder upload failed after {len(uploaded)} file(s): {e}")
+        return uploaded
 
 
 def download_script_folder(user_id, script_id, dest_dir):
