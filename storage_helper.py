@@ -68,16 +68,24 @@ def download_script_folder(user_id, script_id, dest_dir):
 
 
 def delete_script_folder(user_id, script_id):
+    """Delete every mirrored object for a script immediately; report failures."""
     try:
         bucket = get_bucket()
         if not bucket:
+            print("⚠️ Firebase Storage is not configured; no cloud delete was attempted.")
             return False
         prefix = f"scripts/{user_id}/{script_id}/"
+        failed = []
         for blob in bucket.list_blobs(prefix=prefix):
             try:
                 blob.delete()
-            except Exception:
-                pass
+            except Exception as exc:
+                failed.append(blob.name)
+                print(f"❌ Storage delete failed for {blob.name}: {exc}")
+        if failed:
+            print(f"❌ Could not delete {len(failed)} cloud object(s) for {script_id}")
+            return False
+        print(f"🗑️ Firebase Storage folder deleted: {prefix}")
         return True
     except Exception as e:
         print(f"❌ Storage delete failed: {e}")
