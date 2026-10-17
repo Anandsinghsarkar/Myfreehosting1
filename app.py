@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 import os, sys, re, zipfile, tempfile, shutil, subprocess, uuid
 from functools import wraps
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from flask import (Flask, render_template, request, redirect, url_for,
                    session, jsonify, flash, abort, send_file)
@@ -24,6 +24,13 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'dev-secret-change-me')
+# Keep the signed session cookie across browser restarts; explicit logout clears it.
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE='Lax',
+    SESSION_COOKIE_SECURE=os.environ.get('COOKIE_SECURE', 'true').lower() == 'true',
+    PERMANENT_SESSION_LIFETIME=timedelta(days=int(os.environ.get('SESSION_DAYS', '30'))),
+)
 app.config['MAX_CONTENT_LENGTH'] = MAX_FILE_SIZE
 
 init_firebase()
@@ -117,6 +124,8 @@ def auth_session():
     name = claims.get('name', email.split('@')[0] if email else 'User')
     picture = claims.get('picture', '')
     user = db.create_or_update_user(uid, email, name, picture)
+    session.clear()
+    session.permanent = True
     session['uid'] = uid
     return jsonify({'ok': True, 'is_admin': user.get('is_admin', False)})
 
@@ -124,7 +133,9 @@ def auth_session():
 @app.route('/logout')
 def logout():
     session.clear()
-    return redirect(url_for('login'))
+    response = redirect(url_for('login', logged_out='1'))
+    response.delete_cookie(app.config.get('SESSION_COOKIE_NAME', 'session'))
+    return response
 
 
 # ========== USER PAGES ==========
@@ -210,6 +221,19 @@ def upload():
     return _handle_single(f, user, sid, sdir, filename, ext)
 
 
+def _start_uploaded_script(sid, user, sdir, filename, file_type):
+    """Start a newly uploaded, already-approved admin script."""
+    file_path = os.path.join(sdir, filename)
+    if not os.path.isfile(file_path):
+        return False, 'Main file missing'
+    ok, message = runner.start_script(sid, user['uid'], file_path, file_type)
+    if ok:
+        db.update_script(sid, {'running': True, 'status': 'running', 'last_started_at': datetime.utcnow().isoformat()})
+    else:
+        db.update_script(sid, {'running': False, 'status': 'approved', 'last_start_error': str(message)[:500]})
+    return ok, message
+
+
 def _handle_single(f, user, sid, sdir, filename, ext):
     content = f.read()
     if len(content) > MAX_FILE_SIZE:
@@ -219,16 +243,27 @@ def _handle_single(f, user, sid, sdir, filename, ext):
     with open(local_path, 'wb') as out:
         out.write(content)
 
-    # Upload to storage
-    storage_helper.upload_script_file(local_path, user['uid'], sid, filename)
+    # Persist source in Firebase Storage before registering it in Firestore.
+    storage_path = storage_helper.upload_script_file(local_path, user['uid'], sid, filename)
+    if not storage_path:
+        return jsonify({'ok': False, 'error': 'Persistent storage upload failed. Firebase Storage configuration check karo; file ko durable save nahi kiya gaya.'}), 500
 
-    # Save to DB as PENDING
     settings = db.get_settings()
-    initial_status = 'approved' if settings.get('auto_approve') else 'pending'
-    db.add_script(sid, user['uid'], filename, ext[1:], sdir, status=initial_status)
+    is_admin_upload = bool(user.get('is_admin'))
+    initial_status = 'approved' if (is_admin_upload or settings.get('auto_approve')) else 'pending'
+    db.add_script(sid, user['uid'], filename, ext[1:], storage_path, status=initial_status)
 
-    msg = "Uploaded! Admin approval ka wait karo." if initial_status == 'pending' else "Uploaded & approved!"
-    return jsonify({'ok': True, 'sid': sid, 'status': initial_status, 'message': msg})
+    started = False
+    start_message = ''
+    if is_admin_upload:
+        started, start_message = _start_uploaded_script(sid, user, sdir, filename, ext[1:])
+    script = db.get_script(sid) or {}
+    msg = "Admin upload approved and started." if started else (
+        f"Admin upload approved; start failed: {start_message}" if is_admin_upload else
+        ("Uploaded! Admin approval ka wait karo." if initial_status == 'pending' else "Uploaded & approved!")
+    )
+    return jsonify({'ok': True, 'sid': sid, 'status': script.get('status', initial_status),
+                    'started': started, 'message': msg})
 
 
 def _handle_zip(f, user, sid, sdir):
@@ -271,14 +306,27 @@ def _handle_zip(f, user, sid, sdir):
             elif os.path.exists(dst): os.remove(dst)
             shutil.move(src, dst)
 
-        storage_helper.upload_script_folder(sdir, user['uid'], sid)
+        uploaded_files = storage_helper.upload_script_folder(sdir, user['uid'], sid)
+        if not uploaded_files:
+            return jsonify({'ok': False, 'error': 'Persistent storage upload failed. Firebase Storage configuration check karo; ZIP files durable save nahi hui.'}), 500
 
         settings = db.get_settings()
-        initial_status = 'approved' if settings.get('auto_approve') else 'pending'
-        db.add_script(sid, user['uid'], main, main_type, sdir, status=initial_status)
+        is_admin_upload = bool(user.get('is_admin'))
+        initial_status = 'approved' if (is_admin_upload or settings.get('auto_approve')) else 'pending'
+        storage_path = f"scripts/{user['uid']}/{sid}/"
+        db.add_script(sid, user['uid'], main, main_type, storage_path, status=initial_status)
 
-        msg = "Uploaded! Admin approval ka wait karo." if initial_status == 'pending' else "Uploaded & approved!"
-        return jsonify({'ok': True, 'sid': sid, 'status': initial_status, 'message': msg})
+        started = False
+        start_message = ''
+        if is_admin_upload:
+            started, start_message = _start_uploaded_script(sid, user, sdir, main, main_type)
+        script = db.get_script(sid) or {}
+        msg = "Admin ZIP approved and started." if started else (
+            f"Admin ZIP approved; start failed: {start_message}" if is_admin_upload else
+            ("Uploaded! Admin approval ka wait karo." if initial_status == 'pending' else "Uploaded & approved!")
+        )
+        return jsonify({'ok': True, 'sid': sid, 'status': script.get('status', initial_status),
+                        'started': started, 'message': msg})
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
@@ -739,6 +787,49 @@ def payment_history():
     return render_template('payment_history.html', user=user, payments=payments,
                            settings=settings, fb_config=FIREBASE_WEB_CONFIG)
 
+
+def restore_running_scripts():
+    """Rehydrate approved bots marked running from Firebase Storage after Railway restarts."""
+    if os.environ.get('RESTORE_BOTS_ON_STARTUP', 'true').lower() != 'true':
+        print('[RESTORE] Disabled by RESTORE_BOTS_ON_STARTUP', flush=True)
+        return
+    try:
+        scripts = db.list_scripts()
+    except Exception as exc:
+        print(f'[RESTORE] Firestore read failed: {exc}', flush=True)
+        return
+    restored = 0
+    for script in scripts:
+        if script.get('status') != 'running' and not script.get('running'):
+            continue
+        sid = script.get('id')
+        uid = script.get('user_id')
+        if not sid or not uid:
+            continue
+        try:
+            script_dir = runner.get_script_dir(uid, sid)
+            main_path = os.path.join(script_dir, script.get('name', ''))
+            if not os.path.isfile(main_path):
+                storage_helper.download_script_folder(uid, sid, script_dir)
+            if not os.path.isfile(main_path):
+                print(f'[RESTORE] Missing source for {sid}; keeping it stopped', flush=True)
+                db.update_script(sid, {'running': False, 'status': 'approved', 'last_start_error': 'Source files not found in persistent storage'})
+                continue
+            ok, message = runner.start_script(sid, uid, main_path, script.get('type', 'py'))
+            if ok:
+                db.update_script(sid, {'running': True, 'status': 'running', 'last_restored_at': datetime.utcnow().isoformat()})
+                restored += 1
+                print(f'[RESTORE] Started {sid}: {message}', flush=True)
+            else:
+                db.update_script(sid, {'running': False, 'status': 'approved', 'last_start_error': str(message)[:500]})
+                print(f'[RESTORE] Could not start {sid}: {message}', flush=True)
+        except Exception as exc:
+            print(f'[RESTORE] Error for {sid}: {exc}', flush=True)
+    print(f'[RESTORE] Finished. Restarted {restored} bot(s).', flush=True)
+
+
+# Run once when the single Gunicorn worker imports this module.
+restore_running_scripts()
 
 import atexit
 atexit.register(runner.cleanup_all)
