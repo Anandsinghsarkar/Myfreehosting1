@@ -143,7 +143,8 @@ def init_firebase():
         cred = credentials.Certificate(cred_dict)
         print("✅ Certificate created", flush=True)
 
-        bucket_name = os.environ.get('FIREBASE_STORAGE_BUCKET', '').strip()
+        bucket_name = (os.environ.get('FIREBASE_STORAGE_BUCKET', '').strip() or
+                       os.environ.get('FB_STORAGE_BUCKET', '').strip())
 
         if not firebase_admin._apps:
             firebase_admin.initialize_app(cred, {'storageBucket': bucket_name})
