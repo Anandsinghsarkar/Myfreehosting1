@@ -677,6 +677,16 @@ def admin_delete_user(uid):
 def admin_payments():
     user = current_user()
     payments = db.list_payments()
+    now_utc = datetime.utcnow()
+    for payment in payments:
+        payment['approval_wait_seconds'] = 0
+        eligible_at = payment.get('eligible_at') or ''
+        if payment.get('status') == 'pending' and eligible_at:
+            try:
+                remaining = int((datetime.fromisoformat(eligible_at) - now_utc).total_seconds() + 0.99)
+                payment['approval_wait_seconds'] = max(0, remaining)
+            except (TypeError, ValueError):
+                pass
     users_map = {u['uid']: u for u in db.list_users()}
     settings = db.get_settings()
     return render_template('admin_payments.html', user=user, payments=payments,
