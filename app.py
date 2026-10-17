@@ -669,8 +669,21 @@ def admin_add_payment():
 @app.route('/admin/payment/<pid>/status', methods=['POST'])
 @admin_required
 def admin_payment_status(pid):
-    status = request.form.get('status', 'success')
+    status = request.form.get('status', 'pending')
+    if status not in {'pending', 'success', 'failed'}:
+        abort(400)
+    payment = db.get_payment(pid)
+    if not payment:
+        abort(404)
     db.update_payment_status(pid, status)
+    # Only an explicit admin approval activates the package.
+    if status == 'success' and payment.get('plan_id'):
+        uid = payment.get('user_id')
+        days = max(0, int(payment.get('days') or 0))
+        bots = max(1, int(payment.get('bots') or 1))
+        if uid and db.get_user(uid):
+            db.set_user_plan(uid, payment.get('plan_id') or payment.get('plan_name', 'premium'), days or 30)
+            db.update_user(uid, {'file_limit': bots, 'plan_name': payment.get('plan_name', '')})
     flash(f"Payment status: {status}", "success")
     return redirect(url_for('admin_payments'))
 
