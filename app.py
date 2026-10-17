@@ -737,8 +737,12 @@ def admin_update_pricing():
             qr_dir = os.path.join(BASE_DIR, 'static', 'uploads', 'payment_qr')
             os.makedirs(qr_dir, exist_ok=True)
             qr_name = f"qr_{uuid.uuid4().hex}{ext}"
-            qr_file.save(os.path.join(qr_dir, qr_name))
-            data['qr_code_url'] = url_for('static', filename=f'uploads/payment_qr/{qr_name}')
+            qr_path = os.path.join(qr_dir, qr_name)
+            qr_file.save(qr_path)
+            local_qr_url = url_for('static', filename=f'uploads/payment_qr/{qr_name}')
+            # Mirror QR to Firebase when available, but keep local upload working if not.
+            cloud_qr_url = storage_helper.upload_qr_image(qr_path, qr_name)
+            data['qr_code_url'] = cloud_qr_url or local_qr_url
 
         db.update_settings(data)
         flash("Payment details aur pricing save ho gayi ✅", "success")
