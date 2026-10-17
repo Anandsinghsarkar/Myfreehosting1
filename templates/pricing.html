@@ -54,7 +54,7 @@
             <input type="hidden" name="plan_id" id="selectedPlan">
             <label>UPI UTR / Transaction Reference</label>
             <input name="transaction_ref" required maxlength="160" placeholder="Payment ke baad UTR/reference daalein">
-            <p class="muted small" style="margin:8px 0;">Payment request 5 minute review window ke liye pending rahegi. Uske baad admin verify karke approve karega; approval ke turant baad package activate hoga.</p>
+            <p class="muted small" style="margin:8px 0;">Admin payment verify karke approve karte hi package turant activate ho jayega.</p>
             <button class="btn btn-primary" type="submit" style="width:100%;margin-top:10px;">Submit Payment Request</button>
         </form>
         {% if settings.support_telegram or settings.support_contact %}
