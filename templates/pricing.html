@@ -4,6 +4,7 @@
 {% block content %}
 <h1 class="page-title">💎 Hosting Packages</h1>
 <p class="muted small" style="margin-bottom:18px;">Package price, bot limit aur validity admin ke current settings ke mutabik hain.</p>
+{% if settings.offer_text %}<div class="card" style="margin-bottom:16px;">📢 {{ settings.offer_text }}</div>{% endif %}
 
 <div class="features" style="grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); max-width: 1100px;">
     {% for p in settings.plans[:3] %}
