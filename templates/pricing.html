@@ -21,7 +21,7 @@
         </ul>
         {% if p.price > 0 %}
             {% if user %}
-            <button class="btn btn-primary" style="width:100%;margin-top:16px;" onclick="showPay('{{ p.id }}', {{ p.price }}, {{ p.days }}, {{ p.bots }}, {{ p.name|tojson }})">Pay &amp; Request Activation</button>
+            <button class="btn btn-primary" style="width:100%;margin-top:16px;" data-name="{{ p.name }}" onclick="showPay('{{ p.id }}', {{ p.price }}, {{ p.days }}, {{ p.bots }}, this.dataset.name)>Pay &amp; Request Activation</button>
             {% else %}
             <a class="btn btn-primary" style="width:100%;margin-top:16px;" href="{{ url_for('login') }}">Login to Upgrade</a>
             {% endif %}
