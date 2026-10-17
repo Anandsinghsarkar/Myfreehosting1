@@ -48,6 +48,8 @@ firebase.initializeApp({
 const provider = new firebase.auth.GoogleAuthProvider();
 const explicitlyLoggedOut = new URLSearchParams(window.location.search).get('logged_out') === '1';
 
+let loginButtonFlow = false;
+
 async function createServerSession(user) {
     const idToken = await user.getIdToken();
     const res = await fetch('/auth/session', {
@@ -67,7 +69,7 @@ if (explicitlyLoggedOut) {
     window.history.replaceState({}, document.title, '/login');
 } else {
     firebase.auth().onAuthStateChanged(async (user) => {
-        if (!user) return;
+        if (!user || loginButtonFlow) return;
         try {
             await createServerSession(user);
         } catch (e) {
@@ -79,12 +81,14 @@ if (explicitlyLoggedOut) {
 }
 
 document.getElementById('googleBtn').addEventListener('click', async () => {
+    loginButtonFlow = true;
     const errBox = document.getElementById('errorBox');
     errBox.style.display = 'none';
     try {
         const result = await firebase.auth().signInWithPopup(provider);
         await createServerSession(result.user);
     } catch (e) {
+        loginButtonFlow = false;
         errBox.textContent = e.message || 'Google sign-in failed';
         errBox.style.display = 'block';
     }
