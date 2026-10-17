@@ -675,9 +675,10 @@ def admin_payment_status(pid):
     payment = db.get_payment(pid)
     if not payment:
         abort(404)
+    was_successful = payment.get('status') == 'success'
     db.update_payment_status(pid, status)
-    # Only an explicit admin approval activates the package.
-    if status == 'success' and payment.get('plan_id'):
+    # Only an explicit admin approval activates the package, once.
+    if status == 'success' and not was_successful and payment.get('plan_id'):
         uid = payment.get('user_id')
         days = max(0, int(payment.get('days') or 0))
         bots = max(1, int(payment.get('bots') or 1))
@@ -776,6 +777,40 @@ def pricing():
     settings = db.get_settings()
     return render_template('pricing.html', user=user, settings=settings,
                            fb_config=FIREBASE_WEB_CONFIG)
+
+
+@app.route('/payment/request', methods=['POST'])
+@login_required
+def payment_request():
+    user = current_user()
+    settings = db.get_settings()
+    plan_id = request.form.get('plan_id', '').strip()
+    plan = next((p for p in settings.get('plans', []) if p.get('id') == plan_id), None)
+    if not plan:
+        flash('Package nahi mila. Pricing page refresh karke try karein.', 'error')
+        return redirect(url_for('pricing'))
+    try:
+        amount = max(0, int(plan.get('price', 0)))
+        days = max(0, int(plan.get('days', 0)))
+        bots = max(1, int(plan.get('bots', 1)))
+        if amount <= 0 or days <= 0:
+            flash('Free package ke liye payment request ki zaroorat nahi hai.', 'error')
+            return redirect(url_for('pricing'))
+        reference = request.form.get('transaction_ref', '').strip()[:160]
+        if not reference:
+            flash('Payment ke baad UTR / transaction reference daalein.', 'error')
+            return redirect(url_for('pricing'))
+        db.add_payment(
+            user['uid'], amount, 'upi', 'pending',
+            note=f'Transaction reference: {reference}',
+            plan_id=plan_id, plan_name=plan.get('name', plan_id),
+            days=days, bots=bots
+        )
+        flash('Payment request admin ko bhej di gayi hai. Approval ke baad package activate hoga.', 'success')
+        return redirect(url_for('payment_history'))
+    except Exception as exc:
+        flash(f'Payment request save nahi hui: {exc}', 'error')
+        return redirect(url_for('pricing'))
 
 
 @app.route('/docs')
