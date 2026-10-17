@@ -629,9 +629,11 @@ def admin_delete_user(uid):
     if uid == current_user()['uid']:
         flash("Can't delete yourself", "error")
         return redirect(url_for('admin_dashboard'))
-    for s in db.list_scripts(uid):
-        runner.stop_script(s['id'])
-        storage_helper.delete_script_folder(uid, s['id'])
+    for script in db.list_scripts(uid):
+        runner.stop_script(script['id'])
+        if script.get('storage_path') and not storage_helper.delete_script_folder(uid, script['id']):
+            flash(f"Firebase Storage delete failed for {script.get('name', script['id'])}; user not deleted. Check Storage permissions and retry.", "error")
+            return redirect(url_for('admin_dashboard'))
     shutil.rmtree(os.path.join(UPLOAD_DIR, uid), ignore_errors=True)
     db.delete_user(uid)
     flash("User deleted", "success")
