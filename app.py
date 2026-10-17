@@ -243,10 +243,9 @@ def _handle_single(f, user, sid, sdir, filename, ext):
     with open(local_path, 'wb') as out:
         out.write(content)
 
-    # Persist source in Firebase Storage before registering it in Firestore.
-    storage_path = storage_helper.upload_script_file(local_path, user['uid'], sid, filename)
-    if not storage_path:
-        return jsonify({'ok': False, 'error': 'Persistent storage upload failed. Firebase Storage configuration check karo; file ko durable save nahi kiya gaya.'}), 500
+    # Firebase Storage is an optional mirror. The previous local upload flow must
+    # keep working when Storage is not configured; if configured, deletion syncs too.
+    storage_path = storage_helper.upload_script_file(local_path, user['uid'], sid, filename) or ''
 
     settings = db.get_settings()
     is_admin_upload = bool(user.get('is_admin'))
@@ -306,14 +305,13 @@ def _handle_zip(f, user, sid, sdir):
             elif os.path.exists(dst): os.remove(dst)
             shutil.move(src, dst)
 
+        # Optional Firebase mirror; do not block the previous local upload flow.
         uploaded_files = storage_helper.upload_script_folder(sdir, user['uid'], sid)
-        if not uploaded_files:
-            return jsonify({'ok': False, 'error': 'Persistent storage upload failed. Firebase Storage configuration check karo; ZIP files durable save nahi hui.'}), 500
 
         settings = db.get_settings()
         is_admin_upload = bool(user.get('is_admin'))
         initial_status = 'approved' if (is_admin_upload or settings.get('auto_approve')) else 'pending'
-        storage_path = f"scripts/{user['uid']}/{sid}/"
+        storage_path = f"scripts/{user['uid']}/{sid}/" if uploaded_files else ''
         db.add_script(sid, user['uid'], main, main_type, storage_path, status=initial_status)
 
         started = False
@@ -417,9 +415,12 @@ def api_delete(sid):
     s, err = _get_script_for_user(sid, user)
     if err: return jsonify({'ok': False}), err[1]
     runner.stop_script(sid)
+    # Delete cloud copies immediately when this script was mirrored to Firebase.
+    # If cloud deletion fails, keep its database record so the operation can be retried.
+    if s.get('storage_path') and not storage_helper.delete_script_folder(s['user_id'], sid):
+        return jsonify({'ok': False, 'error': 'Firebase Storage delete failed. Check bucket permissions and retry.'}), 502
     sdir = runner.get_script_dir(s['user_id'], sid)
     shutil.rmtree(sdir, ignore_errors=True)
-    storage_helper.delete_script_folder(s['user_id'], sid)
     db.delete_script(sid)
     return jsonify({'ok': True})
 
