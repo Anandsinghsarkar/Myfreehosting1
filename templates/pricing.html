@@ -45,7 +45,7 @@
         {% if settings.upi_id %}
         <div style="background:var(--bg-3);padding:12px;border-radius:10px;margin-bottom:12px;text-align:center;">
             <div class="muted small">UPI ID</div><strong id="upiText">{{ settings.upi_id }}</strong><br>
-            <button type="button" class="btn btn-ghost btn-sm" style="margin-top:6px;" onclick="copyUpi({{ settings.upi_id|tojson }})">📋 Copy UPI ID</button>
+            <button type="button" class="btn btn-ghost btn-sm" style="margin-top:6px;" data-upi="{{ settings.upi_id }}" onclick="copyUpi(this.dataset.upi)">📋 Copy UPI ID</button>
         </div>
         {% endif %}
         <p class="muted small">{{ settings.payment_note }}</p>
