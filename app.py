@@ -693,57 +693,57 @@ def admin_payment_status(pid):
 @admin_required
 def admin_update_pricing():
     try:
-        pricing = {
-            'free': {
-                'price': int(request.form.get('free_price', 0)),
-                'bots': int(request.form.get('free_bots', 2)),
-                'days': 0,
-            },
-            'premium': {
-                'price': int(request.form.get('premium_price', 199)),
-                'bots': int(request.form.get('premium_bots', 20)),
-                'days': int(request.form.get('premium_days', 30)),
-            },
-            'business': {
-                'price': int(request.form.get('business_price', 499)),
-                'bots': int(request.form.get('business_bots', 999)),
-                'days': int(request.form.get('business_days', 30)),
-            },
-        }
+        plans = []
+        legacy_pricing = {}
+        defaults = [
+            ('free', 'Free', 0, 2, 0),
+            ('premium', 'Premium', 199, 20, 30),
+            ('business', 'Business', 499, 999, 30),
+        ]
+        for idx, (plan_id, default_name, default_price, default_bots, default_days) in enumerate(defaults, 1):
+            name = request.form.get(f'plan_name_{idx}', default_name).strip()[:40] or default_name
+            price = max(0, int(request.form.get(f'plan_price_{idx}', default_price)))
+            bots = max(1, int(request.form.get(f'plan_bots_{idx}', default_bots)))
+            days = max(0, int(request.form.get(f'plan_days_{idx}', default_days)))
+            plan = {'id': plan_id, 'name': name, 'price': price, 'bots': bots, 'days': days}
+            plans.append(plan)
+            legacy_pricing[plan_id] = {'price': price, 'bots': bots, 'days': days, 'name': name}
 
         data = {
-            'pricing': pricing,
-            'per_bot_price': int(request.form.get('per_bot_price', 49)),
-            'upi_id': request.form.get('upi_id', '').strip(),
-            'upi_name': request.form.get('upi_name', '').strip(),
-            'offer_text': request.form.get('offer_text', '').strip(),
-            'support_contact': request.form.get('support_contact', '').strip(),
-            'payment_note': request.form.get('payment_note', '').strip(),
-            'auto_approve': request.form.get('auto_approve') == 'on',
+            'plans': plans,
+            'pricing': legacy_pricing,
+            'per_bot_price': max(0, int(request.form.get('per_bot_price', 49))),
+            'upi_id': request.form.get('upi_id', '').strip()[:120],
+            'upi_name': request.form.get('upi_name', '').strip()[:100],
+            'offer_text': request.form.get('offer_text', '').strip()[:250],
+            'support_contact': request.form.get('support_contact', '').strip()[:120],
+            'payment_note': request.form.get('payment_note', '').strip()[:1000],
+            'auto_approve': False,
         }
 
         qr_file = request.files.get('qr_image')
         if qr_file and qr_file.filename:
-            tmp_dir = tempfile.mkdtemp()
-            try:
-                tmp_path = os.path.join(tmp_dir, secure_filename(qr_file.filename))
-                qr_file.save(tmp_path)
-                url = storage_helper.upload_qr_image(
-                    tmp_path, f"qr_{int(datetime.now().timestamp())}.png"
-                )
-                if url:
-                    data['qr_code_url'] = url
-            finally:
-                shutil.rmtree(tmp_dir, ignore_errors=True)
+            ext = os.path.splitext(secure_filename(qr_file.filename))[1].lower()
+            if ext not in {'.png', '.jpg', '.jpeg', '.webp'}:
+                raise ValueError('QR file PNG/JPG/WEBP hona chahiye.')
+            qr_file.stream.seek(0, os.SEEK_END)
+            size = qr_file.stream.tell()
+            qr_file.stream.seek(0)
+            if size > 5 * 1024 * 1024:
+                raise ValueError('QR image 5 MB se chhoti honi chahiye.')
+            qr_dir = os.path.join(BASE_DIR, 'static', 'uploads', 'payment_qr')
+            os.makedirs(qr_dir, exist_ok=True)
+            qr_name = f"qr_{uuid.uuid4().hex}{ext}"
+            qr_file.save(os.path.join(qr_dir, qr_name))
+            data['qr_code_url'] = url_for('static', filename=f'uploads/payment_qr/{qr_name}')
 
         db.update_settings(data)
-        flash("Settings updated ✅", "success")
+        flash("Payment details aur pricing save ho gayi ✅", "success")
     except Exception as e:
         flash(f"Error: {e}", "error")
     return redirect(url_for('admin_payments'))
 
 
-# ========== ADMIN: Script controls ==========
 @app.route('/admin/script/<sid>/start', methods=['POST'])
 @admin_required
 def admin_start(sid):
