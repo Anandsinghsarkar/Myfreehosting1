@@ -737,19 +737,9 @@ def admin_payment_status(pid):
     payment = db.get_payment(pid)
     if not payment:
         abort(404)
-    eligible_at = payment.get('eligible_at') or ''
-    if status == 'success' and eligible_at:
-        try:
-            eligible_dt = datetime.fromisoformat(eligible_at)
-            if datetime.utcnow() < eligible_dt:
-                remaining = max(1, int((eligible_dt - datetime.utcnow()).total_seconds() + 0.99))
-                flash(f'5-minute review window abhi complete nahi hua ({remaining} seconds remaining).', 'error')
-                return redirect(url_for('admin_payments'))
-        except (TypeError, ValueError):
-            pass
     was_successful = payment.get('status') == 'success'
     db.update_payment_status(pid, status)
-    # Only an explicit admin approval activates the package, once.
+    # Approval is immediate: the package activates as soon as an admin approves.
     if status == 'success' and not was_successful and payment.get('plan_id'):
         uid = payment.get('user_id')
         days = max(0, int(payment.get('days') or 0))
@@ -758,9 +748,8 @@ def admin_payment_status(pid):
             db.set_user_plan(uid, payment.get('plan_id') or payment.get('plan_name', 'premium'), days or 30)
             db.update_user(uid, {'file_limit': bots, 'plan_name': payment.get('plan_name', '')})
             notify_telegram_event('Purchase approved', {'User UID': uid, 'Package': payment.get('plan_name', payment.get('plan_id', '')), 'Amount': f"₹{payment.get('amount', 0)}", 'Validity days': days, 'Bot limit': bots, 'Payment ID': pid})
-    flash(f"Payment status: {status}", "success")
+    flash(f"Payment status: {status}" + (" — package activated immediately." if status == 'success' else ""), "success")
     return redirect(url_for('admin_payments'))
-
 
 @app.route('/admin/pricing', methods=['POST'])
 @admin_required
