@@ -76,7 +76,7 @@ def _menu(appmod, chat_id):
         [{"text": "💳 Pending Payments", "callback_data": "menu:payments"},
          {"text": "👥 Recent Users", "callback_data": "menu:users"}],
         [{"text": "▶️ Running Bots", "callback_data": "menu:running"},
-         {"text": "🌐 Open Website Admin", "url": os.environ.get("PUBLIC_BASE_URL", "https://example.com/admin")}],
+         {"text": "🌐 Open Website Admin", "url": _settings(appmod).get("telegram_admin_url") or (os.environ.get("PUBLIC_BASE_URL", "").rstrip("/") + "/admin") or "https://example.com/admin"}],
         [{"text": "🔄 Refresh Menu", "callback_data": "menu:home"}],
     ]
     send_message(appmod, "🤖 Hosting Admin Panel\nChoose an action:", keyboard, chat_id)
