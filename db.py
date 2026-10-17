@@ -255,6 +255,17 @@ def get_settings():
         data = doc.to_dict()
         merged = dict(DEFAULT_SETTINGS)
         merged.update(data)
+        # Older settings documents only stored pricing; translate them for the
+        # new editable package UI until the admin saves the new settings form.
+        if 'plans' not in data and isinstance(data.get('pricing'), dict):
+            names = {'free': 'Free', 'premium': 'Premium', 'business': 'Business'}
+            merged['plans'] = [
+                {'id': key, 'name': data['pricing'].get(key, {}).get('name', names[key]),
+                 'price': int(data['pricing'].get(key, {}).get('price', DEFAULT_SETTINGS['pricing'][key]['price'])),
+                 'bots': int(data['pricing'].get(key, {}).get('bots', DEFAULT_SETTINGS['pricing'][key]['bots'])),
+                 'days': int(data['pricing'].get(key, {}).get('days', DEFAULT_SETTINGS['pricing'][key]['days']))}
+                for key in ('free', 'premium', 'business')
+            ]
         return merged
     return dict(DEFAULT_SETTINGS)
 
