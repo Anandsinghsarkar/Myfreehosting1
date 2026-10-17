@@ -265,16 +265,20 @@ def handle_update(appmod, update):
     msg = update.get("message") or update.get("edited_message")
     cb = update.get("callback_query")
     if msg:
-        chat_id = str((msg.get("chat") or {}).get("id", ""))
-        if chat_id != admin_chat:
+        chat = msg.get("chat") or {}
+        chat_id = str(chat.get("id", ""))
+        sender_id = str((msg.get("from") or {}).get("id", ""))
+        if chat.get("type") != "private" or chat_id != admin_chat or sender_id != admin_chat:
             return
         text = (msg.get("text") or "").strip().lower()
         if text in ("/start", "/menu", "/help"):
             return _menu(appmod, chat_id)
         return send_message(appmod, "Menu ke liye /start bhejein ya neeche buttons use karein.", chat_id=chat_id)
     if cb:
-        chat_id = str(((cb.get("message") or {}).get("chat") or {}).get("id", ""))
-        if chat_id != admin_chat:
+        chat = ((cb.get("message") or {}).get("chat") or {})
+        chat_id = str(chat.get("id", ""))
+        sender_id = str((cb.get("from") or {}).get("id", ""))
+        if chat.get("type") != "private" or chat_id != admin_chat or sender_id != admin_chat:
             _api(appmod, "answerCallbackQuery", {"callback_query_id": cb.get("id"), "text": "Not authorized", "show_alert": "true"})
             return
         _api(appmod, "answerCallbackQuery", {"callback_query_id": cb.get("id"), "text": "Processing..."})
