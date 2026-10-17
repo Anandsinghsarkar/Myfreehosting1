@@ -183,14 +183,14 @@ def count_scripts(user_id):
 
 # ==================== PAYMENTS ====================
 
-def add_payment(user_id, amount, method, status, note='', screenshot_url='', plan_id='', plan_name='', days=0, bots=0):
+def add_payment(user_id, amount, method, status, note='', screenshot_url='', plan_id='', plan_name='', days=0, bots=0, eligible_at=''):
     db = get_db()
     pid = db.collection('payments').document().id
     db.collection('payments').document(pid).set({
         'user_id': user_id, 'amount': float(amount), 'method': method,
         'status': status, 'note': note, 'screenshot_url': screenshot_url,
         'plan_id': plan_id, 'plan_name': plan_name,
-        'days': int(days or 0), 'bots': int(bots or 0), 'created_at': _now(),
+        'days': int(days or 0), 'bots': int(bots or 0), 'eligible_at': eligible_at, 'created_at': _now(),
     })
     return pid
 
@@ -243,7 +243,17 @@ DEFAULT_SETTINGS = {
     'qr_code_url': '',
     'offer_text': 'Get 50% OFF on Premium Plan',
     'support_contact': '@a7hosting',
-    'payment_note': 'Payment ke baad screenshot admin ko bhejo.',
+    'payment_note': 'Payment ke baad UTR reference submit karein.',
+    'support_title': 'Need Help?',
+    'support_message': 'Join our Telegram support group or email us.',
+    'support_telegram': '@a7hosting',
+    'support_email': 'support@a7hosting.com',
+    'support_website': '',
+    'support_button_text': 'Telegram Support',
+    'telegram_bot_token': '',
+    'telegram_chat_id': '',
+    'telegram_bot_username': '',
+    'telegram_bot_enabled': False,
     'auto_approve': False,   # agar True, direct approved
 }
 
