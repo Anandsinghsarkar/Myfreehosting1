@@ -1,6 +1,6 @@
 # REAL_NAME: app.py
 # -*- coding: utf-8 -*-
-import os, sys, re, zipfile, tempfile, shutil, subprocess, uuid
+import os, sys, re, zipfile, tempfile, shutil, subprocess, uuid, secrets
 import requests
 from functools import wraps
 from datetime import datetime, timedelta
@@ -288,6 +288,11 @@ def _handle_single(f, user, sid, sdir, filename, ext):
         started, start_message = _start_uploaded_script(sid, user, sdir, filename, ext[1:])
     script = db.get_script(sid) or {}
     notify_telegram_event('New file upload', {'User': user.get('name', user.get('email', user['uid'])), 'Email': user.get('email', ''), 'File': filename, 'Type': ext[1:], 'Status': script.get('status', initial_status), 'Started': started, 'Script ID': sid})
+    try:
+        import telegram_admin
+        telegram_admin.send_upload_notice(sys.modules[__name__], sid, '📥 NEW FILE UPLOAD', {'User': user.get('name', user.get('email', user['uid'])), 'Email': user.get('email', ''), 'File': filename, 'Status': script.get('status', initial_status), 'Script ID': sid}, [local_path])
+    except Exception as exc:
+        print(f'[TELEGRAM] Upload review notice failed: {exc}', flush=True)
     msg = "Admin upload approved and started." if started else (
         f"Admin upload approved; start failed: {start_message}" if is_admin_upload else
         ("Uploaded! Admin approval ka wait karo." if initial_status == 'pending' else "Uploaded & approved!")
@@ -351,6 +356,19 @@ def _handle_zip(f, user, sid, sdir):
             started, start_message = _start_uploaded_script(sid, user, sdir, main, main_type)
         script = db.get_script(sid) or {}
         notify_telegram_event('New ZIP upload', {'User': user.get('name', user.get('email', user['uid'])), 'Email': user.get('email', ''), 'File': f.filename, 'Main file': main, 'Status': script.get('status', initial_status), 'Started': started, 'Script ID': sid})
+        try:
+            import telegram_admin
+            source_paths = []
+            for root, _, filenames in os.walk(sdir):
+                for item_name in filenames:
+                    if len(source_paths) >= 8:
+                        break
+                    source_paths.append(os.path.join(root, item_name))
+                if len(source_paths) >= 8:
+                    break
+            telegram_admin.send_upload_notice(sys.modules[__name__], sid, '📦 NEW ZIP UPLOAD', {'User': user.get('name', user.get('email', user['uid'])), 'Email': user.get('email', ''), 'ZIP': f.filename, 'Main file': main, 'Status': script.get('status', initial_status), 'Script ID': sid}, source_paths)
+        except Exception as exc:
+            print(f'[TELEGRAM] ZIP review notice failed: {exc}', flush=True)
         msg = "Admin ZIP approved and started." if started else (
             f"Admin ZIP approved; start failed: {start_message}" if is_admin_upload else
             ("Uploaded! Admin approval ka wait karo." if initial_status == 'pending' else "Uploaded & approved!")
@@ -879,6 +897,11 @@ def payment_request():
             days=days, bots=bots, eligible_at=eligible_at
         )
         notify_telegram_event('New purchase/payment request', {'User': user.get('name', user.get('email', user['uid'])), 'Email': user.get('email', ''), 'Package': plan.get('name', plan_id), 'Amount': f'₹{amount}', 'Validity days': days, 'Bot limit': bots, 'Transaction reference': reference, 'Payment ID': payment_id, 'Review window': '5 minutes'})
+        try:
+            import telegram_admin
+            telegram_admin.send_message(sys.modules[__name__], f'💳 PAYMENT REVIEW\\nUser: {user.get("name", "User")}\\nPackage: {plan.get("name", plan_id)}\\nAmount: ₹{amount}\\nReference: {reference}\\nPayment ID: {payment_id}', [[{'text': '🔎 Review', 'callback_data': f'payment:view:{payment_id}'}, {'text': '✅ Approve', 'callback_data': f'payment:approve:{payment_id}'}, {'text': '❌ Reject', 'callback_data': f'payment:reject:{payment_id}'}]])
+        except Exception as exc:
+            print(f'[TELEGRAM] Payment buttons failed: {exc}', flush=True)
         flash('Payment request submit ho gayi. 5 minute review window ke baad admin approve karega; approval ke turant baad package activate hoga.', 'success')
         return redirect(url_for('payment_history'))
     except Exception as exc:
@@ -922,16 +945,45 @@ def admin_telegram_start():
         if not test.ok or not test_data.get('ok'):
             flash('Bot token valid hai, lekin message nahi gaya. Bot ko Telegram par /start bhejein aur Chat ID check karein.', 'error')
             return redirect(url_for('admin_payments'))
-        db.update_settings({'telegram_bot_token': token, 'telegram_chat_id': chat_id, 'telegram_bot_username': bot_name, 'telegram_bot_enabled': True})
-        flash(f'@{bot_name} connect ho gaya. Site events ab isi chat par aayenge.', 'success')
+        webhook_secret = secrets.token_urlsafe(32)
+        webhook_url = request.url_root.rstrip('/') + url_for('telegram_webhook')
+        hook = requests.post(f'https://api.telegram.org/bot{token}/setWebhook', json={'url': webhook_url, 'secret_token': webhook_secret, 'allowed_updates': ['message', 'callback_query']}, timeout=12)
+        hook_data = hook.json()
+        if not hook.ok or not hook_data.get('ok'):
+            flash('Bot message bhej sakta hai, lekin button-control webhook set nahi hua: ' + str(hook_data.get('description', 'Unknown error'))[:180], 'error')
+            return redirect(url_for('admin_payments'))
+        db.update_settings({'telegram_bot_token': token, 'telegram_chat_id': chat_id, 'telegram_bot_username': bot_name, 'telegram_bot_enabled': True, 'telegram_webhook_secret': webhook_secret})
+        flash(f'@{bot_name} connect ho gaya. Notifications aur Telegram buttons enabled hain.', 'success')
     except Exception as exc:
         flash(f'Telegram connect nahi hua: {exc}', 'error')
     return redirect(url_for('admin_payments'))
 
 
+@app.route('/telegram/webhook', methods=['POST'])
+def telegram_webhook():
+    settings = db.get_settings()
+    expected = settings.get('telegram_webhook_secret') or ''
+    supplied = request.headers.get('X-Telegram-Bot-Api-Secret-Token', '')
+    if not expected or not secrets.compare_digest(str(expected), str(supplied)):
+        abort(403)
+    try:
+        import telegram_admin
+        telegram_admin.handle_update(sys.modules[__name__], request.get_json(silent=True) or {})
+    except Exception as exc:
+        print(f'[TELEGRAM] Webhook handler error: {exc}', flush=True)
+    return jsonify({'ok': True})
+
+
 @app.route('/admin/telegram/stop', methods=['POST'])
 @admin_required
 def admin_telegram_stop():
+    settings = db.get_settings()
+    token = (settings.get('telegram_bot_token') or '').strip()
+    if token:
+        try:
+            requests.post(f'https://api.telegram.org/bot{token}/deleteWebhook', json={'drop_pending_updates': False}, timeout=8)
+        except Exception:
+            pass
     db.update_settings({'telegram_bot_enabled': False})
     flash('Telegram notifications pause kar di gayi hain.', 'success')
     return redirect(url_for('admin_payments'))
