@@ -54,8 +54,41 @@
             <div><label>Payment Note</label><textarea name="payment_note" rows="2">{{ settings.payment_note }}</textarea></div>
         </div>
 
+        <h4 style="margin:20px 0 8px;color:var(--text-dim);font-size:12px;text-transform:uppercase;">🛟 Support Page Settings</h4>
+        <div style="display:grid;grid-template-columns:1fr;gap:12px;">
+            <div><label>Support Heading</label><input name="support_title" value="{{ settings.support_title }}" maxlength="100"></div>
+            <div><label>Support Message</label><textarea name="support_message" rows="3" maxlength="1000">{{ settings.support_message }}</textarea></div>
+            <div><label>Telegram Username or Chat Link</label><input name="support_telegram" value="{{ settings.support_telegram }}" placeholder="@your_support"></div>
+            <div><label>Support Email</label><input type="email" name="support_email" value="{{ settings.support_email }}"></div>
+            <div><label>Support Website URL</label><input type="url" name="support_website" value="{{ settings.support_website }}" placeholder="https://example.com"></div>
+            <div><label>Telegram Button Text</label><input name="support_button_text" value="{{ settings.support_button_text }}" maxlength="80"></div>
+        </div>
+
         <button class="btn btn-primary" style="width: 100%; margin-top: 16px;">💾 Save Settings</button>
     </form>
+</div>
+
+<!-- Telegram Notifications -->
+<div class="card mb-3">
+    <div class="card-header"><h3>🤖 Telegram Admin Notifications</h3></div>
+    <p class="muted small">Bot token aur admin chat ID set karke Start dabayein. Bot ko pehle Telegram mein /start bhejein. Token dobara page par show nahi hota.</p>
+    {% if settings.telegram_bot_enabled %}
+    <div class="badge badge-on" style="margin:8px 0;">Connected: @{{ settings.telegram_bot_username }}</div>
+    {% else %}
+    <div class="badge badge-off" style="margin:8px 0;">Notifications stopped</div>
+    {% endif %}
+    <form method="post" action="{{ url_for('admin_telegram_start') }}">
+        <label>Telegram Bot Token</label>
+        <input type="password" name="telegram_bot_token" autocomplete="new-password" placeholder="{{ 'Saved token — blank rakhein to wahi use hoga' if settings.telegram_bot_token else 'BotFather token' }}">
+        <label style="margin-top:10px;">Admin Chat ID</label>
+        <input name="telegram_chat_id" value="{{ settings.telegram_chat_id }}" placeholder="Your numeric Telegram chat ID" required>
+        <button class="btn btn-primary" type="submit" style="width:100%;margin-top:12px;">▶️ Start / Connect Bot</button>
+    </form>
+    {% if settings.telegram_bot_enabled %}
+    <form method="post" action="{{ url_for('admin_telegram_stop') }}" style="margin-top:8px;">
+        <button class="btn btn-ghost" type="submit" style="width:100%;">⏹ Stop Notifications</button>
+    </form>
+    {% endif %}
 </div>
 
 <!-- Add Payment -->
