@@ -1,11 +1,24 @@
 {% extends "base.html" %}
 {% block title %}Support{% endblock %}
 {% block content %}
-<h1 class="page-title">💬 Support</h1>
+<h1 class="page-title">💬 {{ settings.support_title or 'Support' }}</h1>
 <div class="card">
-    <h3>Need Help?</h3>
-    <p class="muted mb-3">Join our Telegram support group or email us.</p>
-    <a href="https://t.me/a7hosting" target="_blank" class="btn btn-cyan">📢 Telegram Group</a>
-    <a href="mailto:support@a7hosting.com" class="btn btn-ghost">✉️ Email</a>
+    <h3>{{ settings.support_title or 'Need Help?' }}</h3>
+    <p class="muted mb-3" style="white-space:pre-line;">{{ settings.support_message or 'Contact support if you need help.' }}</p>
+    {% if settings.support_telegram or settings.support_contact %}
+        {% set tg = settings.support_telegram or settings.support_contact %}
+        {% if tg.startswith('http://') or tg.startswith('https://') %}
+            {% set tg_url = tg %}
+        {% else %}
+            {% set tg_url = 'https://t.me/' ~ tg.replace('@', '') %}
+        {% endif %}
+        <a href="{{ tg_url }}" target="_blank" rel="noopener noreferrer" class="btn btn-cyan">📢 {{ settings.support_button_text or 'Telegram Support' }}</a>
+    {% endif %}
+    {% if settings.support_email %}
+        <a href="mailto:{{ settings.support_email }}" class="btn btn-ghost">✉️ Email Support</a>
+    {% endif %}
+    {% if settings.support_website %}
+        <a href="{{ settings.support_website }}" target="_blank" rel="noopener noreferrer" class="btn btn-ghost">🌐 Support Website</a>
+    {% endif %}
 </div>
 {% endblock %}
