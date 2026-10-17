@@ -147,9 +147,13 @@ def auth_session():
     email = claims.get('email', '')
     name = claims.get('name', email.split('@')[0] if email else 'User')
     picture = claims.get('picture', '')
+    was_logged_in = session.get('uid') == uid
     was_new_user = db.get_user(uid) is None
     user = db.create_or_update_user(uid, email, name, picture)
-    notify_telegram_event('New user registered' if was_new_user else 'User login', {'Name': name, 'Email': email or '(not provided)', 'UID': uid})
+    if was_new_user:
+        notify_telegram_event('New user registered', {'Name': name, 'Email': email or '(not provided)', 'UID': uid})
+    elif not was_logged_in:
+        notify_telegram_event('User login', {'Name': name, 'Email': email or '(not provided)', 'UID': uid})
     session.clear()
     session.permanent = True
     session['uid'] = uid
