@@ -149,9 +149,6 @@
                     {% if p.plan_name %}<div class="small"><strong>{{ p.plan_name }}</strong>{% if p.days %} · {{ p.days }} days · {{ p.bots }} bots{% endif %}</div>{% endif %}
                     {% if p.note %}<div class="muted small" style="word-break:break-word;">{{ p.note }}</div>{% endif %}
                 </div>
-                {% if p.status == 'pending' and p.approval_wait_seconds %}
-                <div class="muted small" style="margin:8px 0;color:var(--warning,#d97706);">⏳ Approval available in about {{ p.approval_wait_seconds }} seconds. Refresh this page after the timer.</div>
-                {% endif %}
                 <div class="row-between">
                     <span class="muted small">{{ p.created_at[:19] }} · {{ p.method }}</span>
                     <form method="post" action="{{ url_for('admin_payment_status', pid=p.id) }}">
