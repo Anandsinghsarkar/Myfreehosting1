@@ -946,13 +946,14 @@ def admin_telegram_start():
             flash('Bot token valid hai, lekin message nahi gaya. Bot ko Telegram par /start bhejein aur Chat ID check karein.', 'error')
             return redirect(url_for('admin_payments'))
         webhook_secret = secrets.token_urlsafe(32)
-        webhook_url = request.url_root.rstrip('/') + url_for('telegram_webhook')
+        public_base = (os.environ.get('PUBLIC_BASE_URL') or ('https://' + request.host)).rstrip('/')
+        webhook_url = public_base + url_for('telegram_webhook')
         hook = requests.post(f'https://api.telegram.org/bot{token}/setWebhook', json={'url': webhook_url, 'secret_token': webhook_secret, 'allowed_updates': ['message', 'callback_query']}, timeout=12)
         hook_data = hook.json()
         if not hook.ok or not hook_data.get('ok'):
             flash('Bot message bhej sakta hai, lekin button-control webhook set nahi hua: ' + str(hook_data.get('description', 'Unknown error'))[:180], 'error')
             return redirect(url_for('admin_payments'))
-        db.update_settings({'telegram_bot_token': token, 'telegram_chat_id': chat_id, 'telegram_bot_username': bot_name, 'telegram_bot_enabled': True, 'telegram_webhook_secret': webhook_secret})
+        db.update_settings({'telegram_bot_token': token, 'telegram_chat_id': chat_id, 'telegram_bot_username': bot_name, 'telegram_bot_enabled': True, 'telegram_webhook_secret': webhook_secret, 'telegram_admin_url': public_base + url_for('admin_dashboard')})
         flash(f'@{bot_name} connect ho gaya. Notifications aur Telegram buttons enabled hain.', 'success')
     except Exception as exc:
         flash(f'Telegram connect nahi hua: {exc}', 'error')
