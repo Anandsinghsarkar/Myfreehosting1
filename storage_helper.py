@@ -31,7 +31,7 @@ def upload_script_folder(local_dir, user_id, script_id):
         for root, dirs, files in os.walk(local_dir):
             for fn in files:
                 local_file = os.path.join(root, fn)
-                rel = os.path.relpath(local_file, local_dir).replace('\\\\', '/')
+                rel = os.path.relpath(local_file, local_dir).replace('\\', '/')
                 blob_path = f"scripts/{user_id}/{script_id}/{rel}"
                 bucket.blob(blob_path).upload_from_filename(local_file)
                 uploaded[rel] = blob_path
