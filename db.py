@@ -183,19 +183,26 @@ def count_scripts(user_id):
 
 # ==================== PAYMENTS ====================
 
-def add_payment(user_id, amount, method, status, note='', screenshot_url=''):
+def add_payment(user_id, amount, method, status, note='', screenshot_url='', plan_id='', plan_name='', days=0, bots=0):
     db = get_db()
     pid = db.collection('payments').document().id
     db.collection('payments').document(pid).set({
-        'user_id': user_id,
-        'amount': float(amount),
-        'method': method,
-        'status': status,
-        'note': note,
-        'screenshot_url': screenshot_url,
-        'created_at': _now(),
+        'user_id': user_id, 'amount': float(amount), 'method': method,
+        'status': status, 'note': note, 'screenshot_url': screenshot_url,
+        'plan_id': plan_id, 'plan_name': plan_name,
+        'days': int(days or 0), 'bots': int(bots or 0), 'created_at': _now(),
     })
     return pid
+
+
+def get_payment(pid):
+    db = get_db()
+    doc = db.collection('payments').document(pid).get()
+    if not doc.exists:
+        return None
+    data = doc.to_dict()
+    data['id'] = doc.id
+    return data
 
 
 def list_payments(user_id=None, limit=200):
@@ -225,6 +232,11 @@ DEFAULT_SETTINGS = {
         'premium': {'price': 199, 'bots': 20, 'days': 30},
         'business': {'price': 499, 'bots': 999, 'days': 30},
     },
+    'plans': [
+        {'id': 'free', 'name': 'Free', 'price': 0, 'bots': 2, 'days': 0},
+        {'id': 'premium', 'name': 'Premium', 'price': 199, 'bots': 20, 'days': 30},
+        {'id': 'business', 'name': 'Business', 'price': 499, 'bots': 999, 'days': 30},
+    ],
     'per_bot_price': 49,
     'upi_id': 'a7hosting@upi',
     'upi_name': 'A7 Hosting',
