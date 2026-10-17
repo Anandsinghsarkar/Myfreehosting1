@@ -22,7 +22,7 @@
         </ul>
         {% if p.price > 0 %}
             {% if user %}
-            <button class="btn btn-primary" style="width:100%;margin-top:16px;" data-name="{{ p.name }}" onclick="showPay('{{ p.id }}', {{ p.price }}, {{ p.days }}, {{ p.bots }}, this.dataset.name)>Pay &amp; Request Activation</button>
+            <button class="btn btn-primary" style="width:100%;margin-top:16px;" data-name="{{ p.name }}" onclick="showPay('{{ p.id }}', {{ p.price }}, {{ p.days }}, {{ p.bots }}, this.dataset.name)">Pay &amp; Request Activation</button>
             {% else %}
             <a class="btn btn-primary" style="width:100%;margin-top:16px;" href="{{ url_for('login') }}">Login to Upgrade</a>
             {% endif %}
@@ -54,11 +54,17 @@
             <input type="hidden" name="plan_id" id="selectedPlan">
             <label>UPI UTR / Transaction Reference</label>
             <input name="transaction_ref" required maxlength="160" placeholder="Payment ke baad UTR/reference daalein">
-            <p class="muted small" style="margin:8px 0;">Request pending rahegi. Admin payment verify karke approve karega; sirf form submit karne se plan activate nahi hota.</p>
+            <p class="muted small" style="margin:8px 0;">Payment request 5 minute review window ke liye pending rahegi. Uske baad admin verify karke approve karega; approval ke turant baad package activate hoga.</p>
             <button class="btn btn-primary" type="submit" style="width:100%;margin-top:10px;">Submit Payment Request</button>
         </form>
-        {% if settings.support_contact %}
-        <a href="https://t.me/{{ settings.support_contact.replace('@','') }}" target="_blank" rel="noopener" class="btn btn-cyan" style="width:100%;margin-top:10px;">📩 Contact Admin</a>
+        {% if settings.support_telegram or settings.support_contact %}
+            {% set pay_support = settings.support_telegram or settings.support_contact %}
+            {% if pay_support.startswith('http://') or pay_support.startswith('https://') %}
+                {% set pay_support_url = pay_support %}
+            {% else %}
+                {% set pay_support_url = 'https://t.me/' ~ pay_support.replace('@','') %}
+            {% endif %}
+            <a href="{{ pay_support_url }}" target="_blank" rel="noopener noreferrer" class="btn btn-cyan" style="width:100%;margin-top:10px;">📩 {{ settings.support_button_text or 'Contact Admin' }}</a>
         {% endif %}
     </div>
 </div>
