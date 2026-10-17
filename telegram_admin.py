@@ -238,15 +238,6 @@ def _callback(appmod, data, chat_id):
         if action == "approve":
             if p.get("status") == "success":
                 return send_message(appmod, "Ye payment pehle se approve hai.", chat_id=chat_id)
-            eligible_at = p.get("eligible_at") or ""
-            if eligible_at:
-                try:
-                    eligible_dt = datetime.fromisoformat(eligible_at)
-                    if datetime.utcnow() < eligible_dt:
-                        remaining = max(1, int((eligible_dt - datetime.utcnow()).total_seconds() + 0.99))
-                        return send_message(appmod, f"⏳ 5-minute review window abhi baaki hai: {remaining} seconds.", [[{"text":"🔄 Check Again","callback_data":"payment:approve:"+ident}]], chat_id)
-                except (TypeError, ValueError):
-                    pass
             db.update_payment_status(ident, "success")
             uid = p.get("user_id")
             days = max(0, int(p.get("days") or 0))
