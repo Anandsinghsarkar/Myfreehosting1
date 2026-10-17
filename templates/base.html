@@ -9,7 +9,7 @@
 <title>{% block title %}A7 Hosting{% endblock %} — A7 HOSTING</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css', v='20261017-admin-mobile-2') }}">
 </head>
 <body>
 
@@ -71,6 +71,14 @@
 
     <!-- Main content -->
     <main class="content">
+        {% if user and user.is_admin %}
+        <nav class="admin-quick-nav" aria-label="Admin quick navigation">
+            <a href="{{ url_for('admin_dashboard') }}">👑 Admin Panel</a>
+            <a href="{{ url_for('admin_payments') }}">💳 Payments &amp; Pricing</a>
+            <a href="{{ url_for('admin_review_queue') }}">📁 Review Files</a>
+            <a href="{{ url_for('admin_terminal_page') }}">⌨️ Terminal</a>
+        </nav>
+        {% endif %}
         {% with msgs = get_flashed_messages(with_categories=true) %}
             {% for cat, m in msgs %}
                 <div class="flash flash-{{ cat }}">{{ m }}</div>
