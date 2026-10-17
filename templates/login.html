@@ -46,28 +46,44 @@ firebase.initializeApp({
 });
 
 const provider = new firebase.auth.GoogleAuthProvider();
-provider.setCustomParameters({ prompt: 'select_account' });
+const explicitlyLoggedOut = new URLSearchParams(window.location.search).get('logged_out') === '1';
+
+async function createServerSession(user) {
+    const idToken = await user.getIdToken();
+    const res = await fetch('/auth/session', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ idToken })
+    });
+    const data = await res.json();
+    if (!res.ok || !data.ok) throw new Error(data.error || 'Login session could not be created');
+    window.location.replace(data.is_admin ? '/admin' : '/dashboard');
+}
+
+// Firebase keeps the Google sign-in locally; restore the server session on later visits.
+// Explicit logout is the only path that clears Firebase persistence.
+if (explicitlyLoggedOut) {
+    firebase.auth().signOut().catch(() => {});
+    window.history.replaceState({}, document.title, '/login');
+} else {
+    firebase.auth().onAuthStateChanged(async (user) => {
+        if (!user) return;
+        try {
+            await createServerSession(user);
+        } catch (e) {
+            const errBox = document.getElementById('errorBox');
+            errBox.textContent = e.message || 'Session restore failed';
+            errBox.style.display = 'block';
+        }
+    });
+}
 
 document.getElementById('googleBtn').addEventListener('click', async () => {
     const errBox = document.getElementById('errorBox');
     errBox.style.display = 'none';
     try {
         const result = await firebase.auth().signInWithPopup(provider);
-        const idToken = await result.user.getIdToken();
-
-        // Send token to backend
-        const res = await fetch('/auth/session', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({ idToken })
-        });
-        const data = await res.json();
-        if (data.ok) {
-            window.location.href = data.is_admin ? '/admin' : '/dashboard';
-        } else {
-            errBox.textContent = data.error || 'Login failed';
-            errBox.style.display = 'block';
-        }
+        await createServerSession(result.user);
     } catch (e) {
         errBox.textContent = e.message || 'Google sign-in failed';
         errBox.style.display = 'block';
