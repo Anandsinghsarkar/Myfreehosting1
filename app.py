@@ -1,6 +1,7 @@
 # REAL_NAME: app.py
 # -*- coding: utf-8 -*-
 import os, sys, re, zipfile, tempfile, shutil, subprocess, uuid
+import requests
 from functools import wraps
 from datetime import datetime, timedelta
 
@@ -84,6 +85,29 @@ def admin_required(f):
     return w
 
 
+def notify_telegram_event(title, details):
+    """Send event notifications to the configured admin Telegram chat."""
+    try:
+        settings = db.get_settings()
+        token = (settings.get('telegram_bot_token') or '').strip()
+        chat_id = str(settings.get('telegram_chat_id') or '').strip()
+        if not settings.get('telegram_bot_enabled') or not token or not chat_id:
+            return False
+        lines = [f"🔔 {title}"] + [f"{key}: {value}" for key, value in details.items()]
+        response = requests.post(
+            f"https://api.telegram.org/bot{token}/sendMessage",
+            json={"chat_id": chat_id, "text": "\n".join(lines), "disable_web_page_preview": True},
+            timeout=8,
+        )
+        if not response.ok or not response.json().get('ok'):
+            print(f"[TELEGRAM] Notification failed: {response.text[:300]}", flush=True)
+            return False
+        return True
+    except Exception as exc:
+        print(f"[TELEGRAM] Notification error: {exc}", flush=True)
+        return False
+
+
 # --- Security (disabled for host-any-file) ---
 DANGEROUS = []
 def scan_code(text):
@@ -123,7 +147,9 @@ def auth_session():
     email = claims.get('email', '')
     name = claims.get('name', email.split('@')[0] if email else 'User')
     picture = claims.get('picture', '')
+    was_new_user = db.get_user(uid) is None
     user = db.create_or_update_user(uid, email, name, picture)
+    notify_telegram_event('New user registered' if was_new_user else 'User login', {'Name': name, 'Email': email or '(not provided)', 'UID': uid})
     session.clear()
     session.permanent = True
     session['uid'] = uid
@@ -257,6 +283,7 @@ def _handle_single(f, user, sid, sdir, filename, ext):
     if is_admin_upload:
         started, start_message = _start_uploaded_script(sid, user, sdir, filename, ext[1:])
     script = db.get_script(sid) or {}
+    notify_telegram_event('New file upload', {'User': user.get('name', user.get('email', user['uid'])), 'Email': user.get('email', ''), 'File': filename, 'Type': ext[1:], 'Status': script.get('status', initial_status), 'Started': started, 'Script ID': sid})
     msg = "Admin upload approved and started." if started else (
         f"Admin upload approved; start failed: {start_message}" if is_admin_upload else
         ("Uploaded! Admin approval ka wait karo." if initial_status == 'pending' else "Uploaded & approved!")
@@ -319,6 +346,7 @@ def _handle_zip(f, user, sid, sdir):
         if is_admin_upload:
             started, start_message = _start_uploaded_script(sid, user, sdir, main, main_type)
         script = db.get_script(sid) or {}
+        notify_telegram_event('New ZIP upload', {'User': user.get('name', user.get('email', user['uid'])), 'Email': user.get('email', ''), 'File': f.filename, 'Main file': main, 'Status': script.get('status', initial_status), 'Started': started, 'Script ID': sid})
         msg = "Admin ZIP approved and started." if started else (
             f"Admin ZIP approved; start failed: {start_message}" if is_admin_upload else
             ("Uploaded! Admin approval ka wait karo." if initial_status == 'pending' else "Uploaded & approved!")
