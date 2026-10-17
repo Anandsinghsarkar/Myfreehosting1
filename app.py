@@ -705,6 +705,16 @@ def admin_payment_status(pid):
     payment = db.get_payment(pid)
     if not payment:
         abort(404)
+    eligible_at = payment.get('eligible_at') or ''
+    if status == 'success' and eligible_at:
+        try:
+            eligible_dt = datetime.fromisoformat(eligible_at)
+            if datetime.utcnow() < eligible_dt:
+                remaining = max(1, int((eligible_dt - datetime.utcnow()).total_seconds() + 0.99))
+                flash(f'5-minute review window abhi complete nahi hua ({remaining} seconds remaining).', 'error')
+                return redirect(url_for('admin_payments'))
+        except (TypeError, ValueError):
+            pass
     was_successful = payment.get('status') == 'success'
     db.update_payment_status(pid, status)
     # Only an explicit admin approval activates the package, once.
@@ -715,6 +725,7 @@ def admin_payment_status(pid):
         if uid and db.get_user(uid):
             db.set_user_plan(uid, payment.get('plan_id') or payment.get('plan_name', 'premium'), days or 30)
             db.update_user(uid, {'file_limit': bots, 'plan_name': payment.get('plan_name', '')})
+            notify_telegram_event('Purchase approved', {'User UID': uid, 'Package': payment.get('plan_name', payment.get('plan_id', '')), 'Amount': f"₹{payment.get('amount', 0)}", 'Validity days': days, 'Bot limit': bots, 'Payment ID': pid})
     flash(f"Payment status: {status}", "success")
     return redirect(url_for('admin_payments'))
 
@@ -749,6 +760,12 @@ def admin_update_pricing():
             'offer_text': request.form.get('offer_text', '').strip()[:250],
             'support_contact': request.form.get('support_contact', '').strip()[:120],
             'payment_note': request.form.get('payment_note', '').strip()[:1000],
+            'support_title': request.form.get('support_title', '').strip()[:100],
+            'support_message': request.form.get('support_message', '').strip()[:1000],
+            'support_telegram': request.form.get('support_telegram', '').strip()[:160],
+            'support_email': request.form.get('support_email', '').strip()[:160],
+            'support_website': request.form.get('support_website', '').strip()[:250],
+            'support_button_text': request.form.get('support_button_text', '').strip()[:80],
             'auto_approve': current_settings.get('auto_approve', False),
         }
 
@@ -820,9 +837,14 @@ def payment_request():
     user = current_user()
     settings = db.get_settings()
     plan_id = request.form.get('plan_id', '').strip()
-    plan = next((p for p in settings.get('plans', []) if p.get('id') == plan_id), None)
+    plans = settings.get('plans') or []
+    plan = next((p for p in plans if str(p.get('id', '')).strip() == plan_id), None)
+    if not plan and plan_id in {'free', 'premium', 'business'}:
+        legacy = (settings.get('pricing') or {}).get(plan_id, {})
+        if legacy:
+            plan = {'id': plan_id, 'name': legacy.get('name', plan_id.title()), 'price': legacy.get('price', 0), 'bots': legacy.get('bots', 2), 'days': legacy.get('days', 0)}
     if not plan:
-        flash('Package nahi mila. Pricing page refresh karke try karein.', 'error')
+        flash('Package list purani ho sakti hai. Pricing page refresh karke package dobara select karein.', 'error')
         return redirect(url_for('pricing'))
     try:
         amount = max(0, int(plan.get('price', 0)))
@@ -835,13 +857,15 @@ def payment_request():
         if not reference:
             flash('Payment ke baad UTR / transaction reference daalein.', 'error')
             return redirect(url_for('pricing'))
-        db.add_payment(
+        eligible_at = (datetime.utcnow() + timedelta(minutes=5)).isoformat()
+        payment_id = db.add_payment(
             user['uid'], amount, 'upi', 'pending',
             note=f'Transaction reference: {reference}',
             plan_id=plan_id, plan_name=plan.get('name', plan_id),
-            days=days, bots=bots
+            days=days, bots=bots, eligible_at=eligible_at
         )
-        flash('Payment request admin ko bhej di gayi hai. Approval ke baad package activate hoga.', 'success')
+        notify_telegram_event('New purchase/payment request', {'User': user.get('name', user.get('email', user['uid'])), 'Email': user.get('email', ''), 'Package': plan.get('name', plan_id), 'Amount': f'₹{amount}', 'Validity days': days, 'Bot limit': bots, 'Transaction reference': reference, 'Payment ID': payment_id, 'Review window': '5 minutes'})
+        flash('Payment request submit ho gayi. 5 minute review window ke baad admin approve karega; approval ke turant baad package activate hoga.', 'success')
         return redirect(url_for('payment_history'))
     except Exception as exc:
         flash(f'Payment request save nahi hui: {exc}', 'error')
@@ -860,6 +884,43 @@ def support():
     settings = db.get_settings()
     return render_template('support.html', user=user, settings=settings,
                            fb_config=FIREBASE_WEB_CONFIG)
+
+
+@app.route('/admin/telegram/start', methods=['POST'])
+@admin_required
+def admin_telegram_start():
+    settings = db.get_settings()
+    token = request.form.get('telegram_bot_token', '').strip() or settings.get('telegram_bot_token', '')
+    chat_id = request.form.get('telegram_chat_id', '').strip() or str(settings.get('telegram_chat_id', '')).strip()
+    if not token or not chat_id:
+        flash('Telegram Bot Token aur Admin Chat ID dono daalein.', 'error')
+        return redirect(url_for('admin_payments'))
+    try:
+        me = requests.get(f'https://api.telegram.org/bot{token}/getMe', timeout=8)
+        me_data = me.json()
+        if not me.ok or not me_data.get('ok'):
+            flash('Telegram token invalid hai. BotFather se token check karein.', 'error')
+            return redirect(url_for('admin_payments'))
+        bot_name = me_data.get('result', {}).get('username', 'Telegram bot')
+        test = requests.post(f'https://api.telegram.org/bot{token}/sendMessage',
+            json={'chat_id': chat_id, 'text': f'✅ Hosting admin notifications connected to @{bot_name}. Events will arrive here.'}, timeout=8)
+        test_data = test.json()
+        if not test.ok or not test_data.get('ok'):
+            flash('Bot token valid hai, lekin message nahi gaya. Bot ko Telegram par /start bhejein aur Chat ID check karein.', 'error')
+            return redirect(url_for('admin_payments'))
+        db.update_settings({'telegram_bot_token': token, 'telegram_chat_id': chat_id, 'telegram_bot_username': bot_name, 'telegram_bot_enabled': True})
+        flash(f'@{bot_name} connect ho gaya. Site events ab isi chat par aayenge.', 'success')
+    except Exception as exc:
+        flash(f'Telegram connect nahi hua: {exc}', 'error')
+    return redirect(url_for('admin_payments'))
+
+
+@app.route('/admin/telegram/stop', methods=['POST'])
+@admin_required
+def admin_telegram_stop():
+    db.update_settings({'telegram_bot_enabled': False})
+    flash('Telegram notifications pause kar di gayi hain.', 'success')
+    return redirect(url_for('admin_payments'))
 
 
 @app.route('/payment-history')
