@@ -30,17 +30,21 @@
             </div>
         </div>
 
-        <h4 style="margin: 20px 0 8px; color: var(--text-dim); font-size: 12px; text-transform: uppercase;">💎 Plan Pricing</h4>
-        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
-            <div><label>Free Bots</label><input type="number" name="free_bots" value="{{ settings.pricing.free.bots }}"></div>
-            <div><label>Free Price (₹)</label><input type="number" name="free_price" value="{{ settings.pricing.free.price }}"></div>
-            <div><label>Premium Price (₹)</label><input type="number" name="premium_price" value="{{ settings.pricing.premium.price }}"></div>
-            <div><label>Premium Bots</label><input type="number" name="premium_bots" value="{{ settings.pricing.premium.bots }}"></div>
-            <div><label>Premium Days</label><input type="number" name="premium_days" value="{{ settings.pricing.premium.days }}"></div>
-            <div><label>Per Extra Bot (₹)</label><input type="number" name="per_bot_price" value="{{ settings.per_bot_price }}"></div>
-            <div><label>Business Price (₹)</label><input type="number" name="business_price" value="{{ settings.pricing.business.price }}"></div>
-            <div><label>Business Bots</label><input type="number" name="business_bots" value="{{ settings.pricing.business.bots }}"></div>
-            <div><label>Business Days</label><input type="number" name="business_days" value="{{ settings.pricing.business.days }}"></div>
+        <h4 style="margin: 20px 0 8px; color: var(--text-dim); font-size: 12px; text-transform: uppercase;">💎 Package Pricing (Admin Controlled)</h4>
+        <p class="muted small">Har package ka naam, price, bots ki limit aur validity days yahin se set karein.</p>
+        <div style="display:grid;grid-template-columns:1fr;gap:12px;">
+            {% for p in settings.plans[:3] %}
+            <div style="border:1px solid var(--border);border-radius:12px;padding:12px;">
+                <strong>Package {{ loop.index }}</strong>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:8px;">
+                    <div style="grid-column:1/-1"><label>Package Name</label><input name="plan_name_{{ loop.index }}" value="{{ p.name }}" maxlength="40" required></div>
+                    <div><label>Price (₹)</label><input type="number" min="0" name="plan_price_{{ loop.index }}" value="{{ p.price }}" required></div>
+                    <div><label>Maximum Bots</label><input type="number" min="1" name="plan_bots_{{ loop.index }}" value="{{ p.bots }}" required></div>
+                    <div><label>Validity (Days)</label><input type="number" min="0" name="plan_days_{{ loop.index }}" value="{{ p.days }}" required></div>
+                </div>
+            </div>
+            {% endfor %}
+            <div><label>Extra Bot Price (₹) — optional</label><input type="number" min="0" name="per_bot_price" value="{{ settings.per_bot_price }}"></div>
         </div>
 
         <h4 style="margin: 20px 0 8px; color: var(--text-dim); font-size: 12px; text-transform: uppercase;">📢 Offer &amp; Support</h4>
