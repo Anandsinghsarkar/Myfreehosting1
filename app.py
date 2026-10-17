@@ -695,16 +695,6 @@ def admin_delete_user(uid):
 def admin_payments():
     user = current_user()
     payments = db.list_payments()
-    now_utc = datetime.utcnow()
-    for payment in payments:
-        payment['approval_wait_seconds'] = 0
-        eligible_at = payment.get('eligible_at') or ''
-        if payment.get('status') == 'pending' and eligible_at:
-            try:
-                remaining = int((datetime.fromisoformat(eligible_at) - now_utc).total_seconds() + 0.99)
-                payment['approval_wait_seconds'] = max(0, remaining)
-            except (TypeError, ValueError):
-                pass
     users_map = {u['uid']: u for u in db.list_users()}
     settings = db.get_settings()
     return render_template('admin_payments.html', user=user, payments=payments,
@@ -878,20 +868,20 @@ def payment_request():
         if not reference:
             flash('Payment ke baad UTR / transaction reference daalein.', 'error')
             return redirect(url_for('pricing'))
-        eligible_at = (datetime.utcnow() + timedelta(minutes=5)).isoformat()
+        eligible_at = ''
         payment_id = db.add_payment(
             user['uid'], amount, 'upi', 'pending',
             note=f'Transaction reference: {reference}',
             plan_id=plan_id, plan_name=plan.get('name', plan_id),
             days=days, bots=bots, eligible_at=eligible_at
         )
-        notify_telegram_event('New purchase/payment request', {'User': user.get('name', user.get('email', user['uid'])), 'Email': user.get('email', ''), 'Package': plan.get('name', plan_id), 'Amount': f'₹{amount}', 'Validity days': days, 'Bot limit': bots, 'Transaction reference': reference, 'Payment ID': payment_id, 'Review window': '5 minutes'})
+        notify_telegram_event('New purchase/payment request', {'User': user.get('name', user.get('email', user['uid'])), 'Email': user.get('email', ''), 'Package': plan.get('name', plan_id), 'Amount': f'₹{amount}', 'Validity days': days, 'Bot limit': bots, 'Transaction reference': reference, 'Payment ID': payment_id, 'Approval': 'Package activates immediately after admin approval'})
         try:
             import telegram_admin
             telegram_admin.send_message(sys.modules[__name__], f'💳 PAYMENT REVIEW\\nUser: {user.get("name", "User")}\\nPackage: {plan.get("name", plan_id)}\\nAmount: ₹{amount}\\nReference: {reference}\\nPayment ID: {payment_id}', [[{'text': '🔎 Review', 'callback_data': f'payment:view:{payment_id}'}, {'text': '✅ Approve', 'callback_data': f'payment:approve:{payment_id}'}, {'text': '❌ Reject', 'callback_data': f'payment:reject:{payment_id}'}]])
         except Exception as exc:
             print(f'[TELEGRAM] Payment buttons failed: {exc}', flush=True)
-        flash('Payment request submit ho gayi. 5 minute review window ke baad admin approve karega; approval ke turant baad package activate hoga.', 'success')
+        flash('Payment request submit ho gayi. Admin payment verify karke approve karte hi package turant activate ho jayega.', 'success')
         return redirect(url_for('payment_history'))
     except Exception as exc:
         flash(f'Payment request save nahi hui: {exc}', 'error')
