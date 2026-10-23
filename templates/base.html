@@ -22,7 +22,6 @@
     <div class="nav-links">
         <a href="{{ url_for('dashboard') }}" class="nav-link {% if request.endpoint == 'dashboard' %}active{% endif %}">🏠 Home</a>
         <a href="{{ url_for('my_bots') }}" class="nav-link {% if request.endpoint == 'my_bots' %}active{% endif %}">🤖 My Bots</a>
-        <a href="{{ url_for('resources_page') }}" class="nav-link {% if request.endpoint == 'resources_page' %}active{% endif %}">📊 Resources</a>
         <a href="{{ url_for('pricing') }}" class="nav-link {% if request.endpoint == 'pricing' %}active{% endif %}">💎 Pricing</a>
         <a href="{{ url_for('docs') }}" class="nav-link {% if request.endpoint == 'docs' %}active{% endif %}">📖 Docs</a>
         <a href="{{ url_for('support') }}" class="nav-link {% if request.endpoint == 'support' %}active{% endif %}">💬 Support</a>
@@ -95,10 +94,6 @@
     <a href="{{ url_for('dashboard') }}" class="bottomnav-link {% if request.endpoint == 'dashboard' %}active{% endif %}">
         <span class="bn-icon">🏠</span>
         <span class="bn-label">Home</span>
-    </a>
-    <a href="{{ url_for('resources_page') }}" class="bottomnav-link {% if request.endpoint == 'resources_page' %}active{% endif %}">
-        <span class="bn-icon">📊</span>
-        <span class="bn-label">Resources</span>
     </a>
     <a href="{{ url_for('my_bots') }}" class="bottomnav-link {% if request.endpoint == 'my_bots' %}active{% endif %}">
         <span class="bn-icon">🤖</span>
