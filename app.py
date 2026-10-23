@@ -1029,3 +1029,139 @@ atexit.register(runner.cleanup_all)
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=False)
+
+
+# ========== GITHUB IMPORT + LIVE HOST RESOURCES ==========
+# GitHub PATs are used only for the import request and are never persisted.
+@app.route('/github/deploy', methods=['POST'])
+@login_required
+def github_deploy():
+    from io import BytesIO
+    from werkzeug.datastructures import FileStorage
+
+    user = current_user()
+    repo_name = (request.form.get('repository') or '').strip().strip('/')
+    branch = (request.form.get('branch') or 'main').strip()
+    token = (request.form.get('github_token') or '').strip()
+
+    if not re.fullmatch(r'[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}', repo_name):
+        flash('GitHub repository format galat hai. owner/repository use karein.', 'error')
+        return redirect(url_for('create_bot'))
+    if not token or len(token) > 500:
+        flash('GitHub token enter karein. Token save nahi kiya jayega.', 'error')
+        return redirect(url_for('create_bot'))
+    if not re.fullmatch(r'[A-Za-z0-9_.-]{1,100}', branch):
+        flash('Branch name invalid hai.', 'error')
+        return redirect(url_for('create_bot'))
+    if db.count_scripts(user['uid']) >= user.get('file_limit', 2):
+        flash('Aapka bot/file limit poora ho gaya hai.', 'error')
+        return redirect(url_for('create_bot'))
+
+    try:
+        api_url = f'https://api.github.com/repos/{repo_name}/zipball/{branch}'
+        response = requests.get(
+            api_url,
+            headers={
+                'Authorization': f'Bearer {token}',
+                'Accept': 'application/vnd.github+json',
+                'X-GitHub-Api-Version': '2022-11-28',
+            },
+            timeout=(10, 45),
+            stream=True,
+            allow_redirects=True,
+        )
+        if response.status_code != 200:
+            response.close()
+            message = 'Repository download nahi hua. Repo/branch aur token permissions check karein.'
+            if response.status_code in (401, 403):
+                message = 'GitHub token invalid, expired, ya required repository access missing hai.'
+            elif response.status_code == 404:
+                message = 'Repository/branch nahi mila ya token ko repository access nahi hai.'
+            flash(message, 'error')
+            return redirect(url_for('create_bot'))
+
+        data = bytearray()
+        for chunk in response.iter_content(chunk_size=65536):
+            if chunk:
+                data.extend(chunk)
+                if len(data) > MAX_FILE_SIZE:
+                    response.close()
+                    flash('GitHub ZIP 20 MB limit se bada hai.', 'error')
+                    return redirect(url_for('create_bot'))
+        response.close()
+        if not data:
+            flash('GitHub ne empty archive return kiya.', 'error')
+            return redirect(url_for('create_bot'))
+
+        sid = str(uuid.uuid4())[:12]
+        sdir = runner.get_script_dir(user['uid'], sid)
+        os.makedirs(sdir, exist_ok=True)
+        upload_file = FileStorage(
+            stream=BytesIO(bytes(data)),
+            filename='github-repository.zip',
+            content_type='application/zip',
+        )
+        # Reuse the existing ZIP upload flow, approval process, and storage mirror.
+        result = _handle_zip(upload_file, user, sid, sdir)
+        if isinstance(result, tuple):
+            return result
+        flash('GitHub repository import request process ho gaya. My Bots mein status check karein.', 'success')
+        return redirect(url_for('my_bots'))
+    except Exception as exc:
+        app.logger.warning('GitHub import failed: %s', type(exc).__name__)
+        flash('GitHub import fail hua. Repository, branch, token access aur server logs check karein.', 'error')
+        return redirect(url_for('create_bot'))
+
+
+def _resource_snapshot():
+    import psutil
+
+    # These are host/container measurements, not invented plan limits.
+    cpu_percent = psutil.cpu_percent(interval=0.15)
+    memory = psutil.virtual_memory()
+    disk_path = UPLOAD_DIR
+    try:
+        disk = psutil.disk_usage(disk_path)
+    except Exception:
+        disk = psutil.disk_usage(BASE_DIR)
+    net = psutil.net_io_counters()
+    try:
+        host_cpu_count = psutil.cpu_count(logical=True) or 1
+    except Exception:
+        host_cpu_count = 1
+    return {
+        'cpu_percent': round(float(cpu_percent), 1),
+        'cpu_count': int(host_cpu_count),
+        'ram_total_mb': round(memory.total / (1024 ** 2), 1),
+        'ram_used_mb': round(memory.used / (1024 ** 2), 1),
+        'ram_available_mb': round(memory.available / (1024 ** 2), 1),
+        'ram_percent': round(float(memory.percent), 1),
+        'storage_total_gb': round(disk.total / (1024 ** 3), 2),
+        'storage_used_gb': round(disk.used / (1024 ** 3), 2),
+        'storage_free_gb': round(disk.free / (1024 ** 3), 2),
+        'storage_percent': round(float(disk.percent), 1),
+        # Interface counters since the host/container boot; not per-user quotas.
+        'bandwidth_sent_mb': round(net.bytes_sent / (1024 ** 2), 2) if net else None,
+        'bandwidth_received_mb': round(net.bytes_recv / (1024 ** 2), 2) if net else None,
+        'measured_at': datetime.utcnow().isoformat(timespec='seconds') + 'Z',
+        'scope': 'hosting process container/host as exposed by the provider',
+    }
+
+
+@app.route('/resources')
+@login_required
+def resources_page():
+    user = current_user()
+    return render_template('resources.html', user=user,
+                           resources=_resource_snapshot(),
+                           fb_config=FIREBASE_WEB_CONFIG)
+
+
+@app.route('/api/resources')
+@login_required
+def api_resources():
+    try:
+        return jsonify({'ok': True, 'resources': _resource_snapshot()})
+    except Exception:
+        app.logger.exception('Resource snapshot failed')
+        return jsonify({'ok': False, 'error': 'Resource metrics unavailable on this host'}), 503
