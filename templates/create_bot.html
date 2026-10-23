@@ -1,51 +1,56 @@
 {% extends "base.html" %}
 {% block title %}Create Bot{% endblock %}
+
 {% block content %}
 <h1 class="page-title">➕ Create Bot</h1>
 
-<div class="card" style="max-width:760px;margin-bottom:16px;">
-  <h3 style="margin-bottom:12px;">📦 Upload Script</h3>
-  <p class="muted small mb-3">Upload a <code>.py</code>, <code>.js</code>, or <code>.zip</code> file (max 20 MB). ZIP files can include requirements.txt or package.json.</p>
-  <form id="uploadForm">
-    <label>Select File</label><input type="file" name="file" id="fileInput" accept=".py,.js,.zip" required>
-    <div id="status" class="muted small" style="margin:12px 0;"></div>
-    <button type="submit" class="btn btn-primary" id="submitBtn">🚀 Upload &amp; Deploy</button>
-  </form>
-</div>
+<div class="card" style="max-width: 640px;">
+    <h3 style="margin-bottom: 12px;">Upload Script</h3>
+    <p class="muted small mb-3">
+        Upload a <code>.py</code>, <code>.js</code>, or <code>.zip</code> file (max 20 MB).
+        If your bot has dependencies, include a <code>requirements.txt</code> (Python) or
+        <code>package.json</code> (Node.js) in the zip.
+    </p>
 
-<div class="card" style="max-width:760px;">
-  <h3 style="margin-bottom:8px;">🐙 Import from GitHub</h3>
-  <p class="muted small mb-3">Connect a repository using a GitHub token and import its ZIP archive. The token is used for this request only and is not saved by this app. Repository import is subject to your normal bot approval and hosting limits.</p>
-  <form id="githubForm" method="post" action="/github/deploy" autocomplete="off">
-    <label for="repository">Repository (owner/repository)</label>
-    <input id="repository" name="repository" type="text" placeholder="username/my-telegram-bot" maxlength="201" required>
-    <label for="branch" style="margin-top:12px;">Branch</label>
-    <input id="branch" name="branch" type="text" value="main" maxlength="100" required>
-    <label for="github_token" style="margin-top:12px;">GitHub Personal Access Token</label>
-    <input id="github_token" name="github_token" type="password" placeholder="Paste token for repository access" autocomplete="new-password" required>
-    <p class="muted small" style="margin-top:8px;">Use the minimum repository access needed. Never share your token with anyone. For private repositories, grant access only to that repository.</p>
-    <button type="submit" class="btn btn-primary" id="githubSubmit" style="margin-top:12px;">⬇️ Connect GitHub &amp; Import</button>
-    <div id="githubStatus" class="muted small" style="margin-top:10px;" role="status"></div>
-  </form>
+    <form id="uploadForm">
+        <label>Select File</label>
+        <input type="file" name="file" id="fileInput" accept=".py,.js,.zip" required>
+        <div id="status" class="muted small" style="margin: 12px 0;"></div>
+        <button type="submit" class="btn btn-primary" id="submitBtn">🚀 Upload &amp; Deploy</button>
+    </form>
 </div>
 
 <script>
 document.getElementById('uploadForm').addEventListener('submit', async (e) => {
- e.preventDefault();
- const file=document.getElementById('fileInput').files[0]; if(!file)return;
- const btn=document.getElementById('submitBtn'), status=document.getElementById('status');
- btn.disabled=true; btn.textContent='⏳ Uploading…'; status.textContent='Uploading file…';
- const fd=new FormData(); fd.append('file',file);
- try{
-  const res=await fetch('/upload',{method:'POST',body:fd}); const data=await res.json();
-  if(data.ok){status.textContent='✅ '+(data.message||'Uploaded');window.location.href='/my-bots';}
-  else{status.textContent='❌ '+(data.error||'Upload failed');btn.disabled=false;btn.textContent='🚀 Upload & Deploy';}
- }catch(e){status.textContent='❌ '+e.message;btn.disabled=false;btn.textContent='🚀 Upload & Deploy';}
-});
-document.getElementById('githubForm').addEventListener('submit',()=>{
- const btn=document.getElementById('githubSubmit');
- btn.disabled=true;btn.textContent='⏳ Connecting and importing…';
- document.getElementById('githubStatus').textContent='Importing repository. Please wait…';
+    e.preventDefault();
+    const file = document.getElementById('fileInput').files[0];
+    if (!file) return;
+
+    const btn = document.getElementById('submitBtn');
+    const status = document.getElementById('status');
+    btn.disabled = true;
+    btn.textContent = '⏳ Uploading…';
+    status.textContent = 'Uploading file…';
+
+    const fd = new FormData();
+    fd.append('file', file);
+
+    try {
+        const res = await fetch('/upload', { method: 'POST', body: fd });
+        const data = await res.json();
+        if (data.ok) {
+            status.textContent = '✅ Uploaded!';
+            window.location.href = '/my-bots';
+        } else {
+            status.textContent = '❌ ' + (data.error || 'Upload failed');
+            btn.disabled = false;
+            btn.textContent = '🚀 Upload & Deploy';
+        }
+    } catch (e) {
+        status.textContent = '❌ ' + e.message;
+        btn.disabled = false;
+        btn.textContent = '🚀 Upload & Deploy';
+    }
 });
 </script>
 {% endblock %}
