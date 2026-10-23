@@ -1026,9 +1026,6 @@ import atexit
 atexit.register(runner.cleanup_all)
 
 
-if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port, debug=False)
 
 
 # ========== GITHUB IMPORT + LIVE HOST RESOURCES ==========
@@ -1165,3 +1162,8 @@ def api_resources():
     except Exception:
         app.logger.exception('Resource snapshot failed')
         return jsonify({'ok': False, 'error': 'Resource metrics unavailable on this host'}), 503
+
+
+if __name__ == '__main__':
+    port = int(os.environ.get('PORT', 5000))
+    app.run(host='0.0.0.0', port=port, debug=False)
