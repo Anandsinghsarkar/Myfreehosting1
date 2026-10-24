@@ -1,0 +1,12 @@
+# Render Blueprint for MyFreeHosting1
+# IMPORTANT: "starter" is a paid instance plan; code alone cannot keep a Free
+# Render web service awake. Review the plan and billing before applying this
+# Blueprint to an existing service.
+services:
+  - type: web
+    name: myfreehosting1
+    runtime: docker
+    plan: starter
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    autoDeploy: true
