@@ -1021,7 +1021,7 @@ def payment_history():
 
 
 def restore_running_scripts():
-    """Rehydrate approved bots marked running from Firebase Storage after Railway restarts."""
+    """Restore bots marked running from persistent Firebase Storage after Render restarts."""
     if os.environ.get('RESTORE_BOTS_ON_STARTUP', 'true').lower() != 'true':
         print('[RESTORE] Disabled by RESTORE_BOTS_ON_STARTUP', flush=True)
         return
@@ -1060,7 +1060,7 @@ def restore_running_scripts():
     print(f'[RESTORE] Finished. Restarted {restored} bot(s).', flush=True)
 
 
-# Run once when the single Gunicorn worker imports this module.
+# Restore bots when the Render web service process starts. Use one Gunicorn worker to avoid duplicate bot processes.
 restore_running_scripts()
 
 import atexit
