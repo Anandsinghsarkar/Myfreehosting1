@@ -2,7 +2,7 @@ name: Keep Render Web Service Awake
 
 on:
   schedule:
-    # GitHub scheduled workflows are best-effort and may be delayed.
+    # Best-effort health check; GitHub may delay scheduled runs.
     - cron: "*/10 * * * *"
   workflow_dispatch:
 
@@ -14,48 +14,19 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  keep-awake:
+  ping:
     runs-on: ubuntu-latest
-    timeout-minutes: 3
+    timeout-minutes: 2
     steps:
-      - name: Validate required secrets
-        env:
-          ADMIN_LOGIN_EMAIL: ${{ secrets.ADMIN_LOGIN_EMAIL }}
-          ADMIN_LOGIN_PASSWORD: ${{ secrets.ADMIN_LOGIN_PASSWORD }}
-        run: |
-          set -eu
-          if [ -z "$ADMIN_LOGIN_EMAIL" ] || [ -z "$ADMIN_LOGIN_PASSWORD" ]; then
-            echo "Missing repository secrets: ADMIN_LOGIN_EMAIL and/or ADMIN_LOGIN_PASSWORD."
-            exit 1
-          fi
-
-      - name: Sign in through the configured admin login endpoint
-        env:
-          ADMIN_LOGIN_EMAIL: ${{ secrets.ADMIN_LOGIN_EMAIL }}
-          ADMIN_LOGIN_PASSWORD: ${{ secrets.ADMIN_LOGIN_PASSWORD }}
-          LOGIN_URL: https://myfreehosting1.onrender.com/auth/password
-        run: |
-          set -eu
-          payload="$(python -c 'import json,os; print(json.dumps({"email":os.environ["ADMIN_LOGIN_EMAIL"],"password":os.environ["ADMIN_LOGIN_PASSWORD"]}))')"
-          code="$(curl --silent --show-error --location --max-time 45 \
-            --output /tmp/login-response.json --write-out '%{http_code}' \
-            --header 'Content-Type: application/json' \
-            --request POST --data "$payload" "$LOGIN_URL" || true)"
-          if [ "$code" != "200" ]; then
-            echo "Admin login request failed (HTTP ${code:-no-response}). Check the GitHub secrets and Render environment variables."
-            exit 1
-          fi
-          python -c 'import json; d=json.load(open("/tmp/login-response.json")); assert d.get("ok") is True, "Login endpoint did not confirm success"; print("Scheduled admin login succeeded.")'
-
       - name: Ping Render health endpoint
         env:
           HEALTH_URL: https://myfreehosting1.onrender.com/health
         run: |
           set -eu
           code="$(curl --silent --show-error --location --max-time 45 --output /tmp/health-response.txt --write-out '%{http_code}' "$HEALTH_URL" || true)"
+          cat /tmp/health-response.txt 2>/dev/null || true
           if [ "$code" != "200" ]; then
             echo "Health check failed (HTTP ${code:-no-response})"
             exit 1
           fi
-          cat /tmp/health-response.txt
           echo "Render health endpoint responded with HTTP 200."
