@@ -160,6 +160,19 @@ def auth_session():
     return jsonify({'ok': True, 'is_admin': user.get('is_admin', False)})
 
 
+@app.route('/auth/keepalive', methods=['POST'])
+def auth_keepalive():
+    """Renew an already authenticated session; never logs in without credentials."""
+    user = current_user()
+    if not user:
+        return jsonify({'ok': False, 'error': 'Session expired; please sign in again.'}), 401
+    session.permanent = True
+    session.modified = True
+    response = jsonify({'ok': True, 'session_days': int(os.environ.get('SESSION_DAYS', '30'))})
+    response.headers['Cache-Control'] = 'no-store'
+    return response
+
+
 @app.route('/auth/password', methods=['POST'])
 def auth_password():
     """Environment-configured admin login; secrets stay on the server."""
