@@ -1,6 +1,6 @@
 # REAL_NAME: app.py
 # -*- coding: utf-8 -*-
-import os, sys, re, zipfile, tempfile, shutil, subprocess, uuid, secrets
+import os, sys, re, zipfile, tempfile, shutil, subprocess, uuid, secrets, hashlib
 import requests
 from functools import wraps
 from datetime import datetime, timedelta
@@ -158,6 +158,34 @@ def auth_session():
     session.permanent = True
     session['uid'] = uid
     return jsonify({'ok': True, 'is_admin': user.get('is_admin', False)})
+
+
+@app.route('/auth/password', methods=['POST'])
+def auth_password():
+    """Environment-configured admin login; secrets stay on the server."""
+    configured_email = os.environ.get('ADMIN_LOGIN_EMAIL', '').strip().lower()
+    configured_password = os.environ.get('ADMIN_LOGIN_PASSWORD', '')
+    if not configured_email or not configured_password:
+        return jsonify({'ok': False, 'error': 'Email/password login is not configured on the hosting environment.'}), 503
+
+    data = request.get_json(silent=True) or {}
+    supplied_email = str(data.get('email', '')).strip().lower()
+    supplied_password = str(data.get('password', ''))
+    email_ok = secrets.compare_digest(supplied_email, configured_email)
+    password_ok = secrets.compare_digest(supplied_password, configured_password)
+    if not (email_ok and password_ok):
+        return jsonify({'ok': False, 'error': 'Email ya password galat hai.'}), 401
+
+    uid = 'envadmin_' + hashlib.sha256(configured_email.encode('utf-8')).hexdigest()[:32]
+    user = db.create_or_update_user(uid, configured_email, 'Administrator', '')
+    if not user.get('is_admin'):
+        db.make_admin(uid, True)
+        user = db.get_user(uid) or user
+
+    session.clear()
+    session.permanent = True
+    session['uid'] = uid
+    return jsonify({'ok': True, 'is_admin': True})
 
 
 @app.route('/logout')
