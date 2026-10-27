@@ -134,6 +134,32 @@ window.FIREBASE_CONFIG = {
     appId: "{{ fb_config.appId }}"
 };
 </script>
+{% if user %}
+<script>
+// Renew the signed-in session every 10 minutes while a page is open.
+// This keeps an existing login alive; it does not bypass logout or create a new login.
+(function () {
+    const KEEPALIVE_MS = 10 * 60 * 1000;
+    async function refreshSession() {
+        if (document.visibilityState === 'hidden') return;
+        try {
+            const response = await fetch('/auth/keepalive', {
+                method: 'POST',
+                credentials: 'same-origin',
+                headers: {'X-Requested-With': 'fetch'}
+            });
+            if (response.status === 401) {
+                // Do not silently re-login; the user must sign in again.
+                return;
+            }
+        } catch (error) {
+            // Temporary network errors are ignored; the next interval will retry.
+        }
+    }
+    window.setInterval(refreshSession, KEEPALIVE_MS);
+})();
+</script>
+{% endif %}
 {% block scripts %}{% endblock %}
 </body>
 </html>
