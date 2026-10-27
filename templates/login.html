@@ -18,6 +18,16 @@
         <h1>Welcome Back 👋</h1>
         <p class="sub">Sign in with Google to host your Telegram bots 24/7</p>
 
+        <form id="passwordLoginForm" style="display:grid;gap:12px;margin:18px 0;">
+            <label for="loginEmail" style="text-align:left;font-weight:600;">Admin email</label>
+            <input id="loginEmail" type="email" autocomplete="username" placeholder="Admin email" required
+                   style="width:100%;box-sizing:border-box;padding:13px;border-radius:10px;border:1px solid #334155;background:#0b1220;color:#fff;">
+            <label for="loginPassword" style="text-align:left;font-weight:600;">Password</label>
+            <input id="loginPassword" type="password" autocomplete="current-password" placeholder="Password" required
+                   style="width:100%;box-sizing:border-box;padding:13px;border-radius:10px;border:1px solid #334155;background:#0b1220;color:#fff;">
+            <button type="submit" class="google-btn" id="passwordLoginBtn">Login with Email &amp; Password</button>
+        </form>
+
         <button id="googleBtn" class="google-btn">
             <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="">
             Continue with Google
@@ -79,6 +89,34 @@ if (explicitlyLoggedOut) {
         }
     });
 }
+
+document.getElementById('passwordLoginForm').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const errBox = document.getElementById('errorBox');
+    const button = document.getElementById('passwordLoginBtn');
+    errBox.style.display = 'none';
+    button.disabled = true;
+    button.textContent = 'Signing in...';
+    try {
+        const res = await fetch('/auth/password', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                email: document.getElementById('loginEmail').value,
+                password: document.getElementById('loginPassword').value
+            })
+        });
+        const data = await res.json();
+        if (!res.ok || !data.ok) throw new Error(data.error || 'Login failed');
+        window.location.replace('/admin');
+    } catch (e) {
+        errBox.textContent = e.message || 'Login failed';
+        errBox.style.display = 'block';
+    } finally {
+        button.disabled = false;
+        button.textContent = 'Login with Email & Password';
+    }
+});
 
 document.getElementById('googleBtn').addEventListener('click', async () => {
     loginButtonFlow = true;
