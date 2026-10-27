@@ -1,0 +1,32 @@
+name: Keep Render Web Service Awake
+
+on:
+  schedule:
+    # GitHub Actions schedules can be delayed; this is best-effort, not a 24/7 guarantee.
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: render-keepalive
+  cancel-in-progress: false
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Ping Render health endpoint
+        env:
+          HEALTH_URL: https://myfreehosting1.onrender.com/health
+        run: |
+          set -eu
+          code="$(curl --silent --show-error --location --max-time 45 --output /tmp/health-response.txt --write-out '%{http_code}' "$HEALTH_URL" || true)"
+          cat /tmp/health-response.txt 2>/dev/null || true
+          if [ "$code" != "200" ]; then
+            echo "Health check failed (HTTP ${code:-no-response})"
+            exit 1
+          fi
+          echo "Render health endpoint responded with HTTP 200."
