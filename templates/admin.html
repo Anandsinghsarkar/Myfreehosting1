@@ -90,23 +90,31 @@
         <button class="btn btn-primary btn-sm" type="button" onclick="checkPing()">Check Now</button>
         <span id="pingStatus" class="muted small">Not checked yet</span>
     </div>
-    <div style="font-size:12px;color:var(--text-dim);margin-bottom:8px;">Render container filesystem (actual total / used / free)</div>
-    <div style="height:12px;border-radius:99px;background:var(--bg-2);overflow:hidden;border:1px solid var(--border);">
-        <div id="renderStorageBar" style="height:100%;width:0%;background:linear-gradient(90deg,var(--cyan),var(--primary-hi));transition:width .5s;"></div>
+    <style>
+      #serviceMonitor{perspective:1000px;background:linear-gradient(145deg,rgba(18,24,43,.98),rgba(9,13,27,.98));box-shadow:0 18px 45px rgba(0,0,0,.28),inset 0 1px 0 rgba(255,255,255,.04)}
+      #serviceMonitor .storage-3d{border:1px solid var(--border);border-radius:16px;padding:14px;background:linear-gradient(145deg,rgba(31,41,66,.62),rgba(13,18,34,.92));box-shadow:0 12px 24px rgba(0,0,0,.22),inset 0 1px 0 rgba(255,255,255,.06);transform:translateZ(0);transition:transform .25s,box-shadow .25s}
+      #serviceMonitor .storage-3d:hover{transform:translateY(-3px) rotateX(1deg);box-shadow:0 18px 30px rgba(0,0,0,.3)}
+      #serviceMonitor .storage-meter{height:13px;border-radius:99px;background:rgba(255,255,255,.06);overflow:hidden;border:1px solid var(--border);box-shadow:inset 0 3px 7px rgba(0,0,0,.35)}
+      #serviceMonitor .storage-meter>div{height:100%;width:0;background:linear-gradient(90deg,#06b6d4,#6366f1,#a855f7);box-shadow:0 0 16px rgba(99,102,241,.45);transition:width .6s}
+      #serviceMonitor .storage-value{font-size:22px;font-weight:850;letter-spacing:-.6px;margin-top:6px}
+    </style>
+    <div class="storage-3d" style="margin-bottom:12px;">
+      <div style="font-size:12px;color:var(--text-dim);margin-bottom:8px;">Render temporary bot files · only this app's working files</div>
+      <div class="storage-meter"><div id="renderStorageBar"></div></div>
+      <div class="stats-row" style="margin-top:10px;">
+        <div class="stat-card storage-3d"><div class="label">Temporary used</div><div class="storage-value" id="renderUsed">—</div></div>
+        <div class="stat-card storage-3d"><div class="label">Runtime status</div><div class="storage-value" id="renderTotal">—</div></div>
+        <div class="stat-card storage-3d"><div class="label">Container quota</div><div class="storage-value" id="renderFree">Not exposed</div></div>
+      </div>
     </div>
-    <div class="stats-row" style="margin-top:10px;">
-        <div class="stat-card"><div class="stat-body"><div class="label">Total</div><div class="value" id="renderTotal">—</div></div></div>
-        <div class="stat-card"><div class="stat-body"><div class="label">Used</div><div class="value" id="renderUsed">—</div></div></div>
-        <div class="stat-card"><div class="stat-body"><div class="label">Free</div><div class="value" id="renderFree">—</div></div></div>
-    </div>
-    <div style="margin-top:14px;padding:12px;border:1px solid var(--border);border-radius:10px;background:var(--bg-2);">
-        <b>☁️ Firebase Bot Files</b>
-        <div class="muted small" style="margin-top:5px;">Actual size of objects stored under scripts/ in the configured Firebase Storage bucket.</div>
-        <div style="display:flex;gap:18px;flex-wrap:wrap;margin-top:10px;font-size:13px;">
-            <span>Used: <b id="firebaseUsed">—</b></span>
-            <span>Files: <b id="firebaseFiles">—</b></span>
-            <span>Total / free quota: <b id="firebaseQuota">Not exposed by Firebase bucket API</b></span>
-        </div>
+    <div class="storage-3d">
+      <b>☁️ Firebase Bot Storage</b>
+      <div class="muted small" style="margin-top:5px;">Actual object bytes and file count under scripts/ in your configured Firebase Storage bucket.</div>
+      <div class="stats-row" style="margin-top:10px;">
+        <div class="stat-card storage-3d"><div class="label">Cloud used</div><div class="storage-value" id="firebaseUsed">—</div></div>
+        <div class="stat-card storage-3d"><div class="label">Cloud files</div><div class="storage-value" id="firebaseFiles">—</div></div>
+        <div class="stat-card storage-3d"><div class="label">Quota</div><div class="storage-value" id="firebaseQuota">Not exposed</div></div>
+      </div>
     </div>
     <div class="muted small" id="storageUpdated" style="margin-top:8px;"></div>
 </div>
@@ -131,15 +139,15 @@ async function refreshServiceMonitor() {
         const r=await fetch('{{ url_for("api_admin_storage") }}',{cache:'no-store'});
         const d=await r.json();
         if(!d.ok) throw new Error(d.error||'Could not load storage');
-        const s=d.render;
-        document.getElementById('renderTotal').textContent=fmtBytes(s.total_bytes);
-        document.getElementById('renderUsed').textContent=fmtBytes(s.used_bytes)+' ('+s.used_percent+'%)';
-        document.getElementById('renderFree').textContent=fmtBytes(s.free_bytes);
-        document.getElementById('renderStorageBar').style.width=Math.min(100,s.used_percent)+'%';
+        const s=d.render||{};
+        document.getElementById('renderUsed').textContent=fmtBytes(s.used_bytes);
+        document.getElementById('renderTotal').textContent=s.used_bytes===0?'No temporary files':'Temporary runtime';
+        document.getElementById('renderFree').textContent='Not exposed';
+        document.getElementById('renderStorageBar').style.width=s.used_bytes>0?'100%':'0%';
         const f=d.firebase||{};
         document.getElementById('firebaseUsed').textContent=f.configured?fmtBytes(f.used_bytes):'Not configured';
         document.getElementById('firebaseFiles').textContent=f.configured?(f.file_count+' files'):'—';
-        document.getElementById('firebaseQuota').textContent=f.error?'Read error':(f.configured?'Quota not exposed by Firebase bucket API':'Not configured');
+        document.getElementById('firebaseQuota').textContent=f.error?'Error: '+f.error.slice(0,90):(f.configured?'Not exposed':'Not configured');
         document.getElementById('storageUpdated').textContent='Updated: '+new Date().toLocaleTimeString();
     } catch(e) {
         document.getElementById('storageUpdated').textContent='Storage check failed: '+e.message;
