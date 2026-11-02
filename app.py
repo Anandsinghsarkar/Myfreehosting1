@@ -495,6 +495,20 @@ def _start_uploaded_script(sid, user, sdir, filename, file_type):
     return ok, message
 
 
+
+def _upload_env_vars():
+    raw = request.form.get('env_vars', '').strip()
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(raw)
+        if not isinstance(parsed, dict):
+            raise ValueError('Environment variables must be a JSON object.')
+        return {str(k): str(v) for k, v in parsed.items()
+                if re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]{0,127}', str(k))}
+    except Exception as exc:
+        raise ValueError(f'Invalid environment variables JSON: {exc}')
+
 def _handle_single(f, user, sid, sdir, filename, ext):
     content = f.read()
     if len(content) > MAX_FILE_SIZE:
@@ -515,6 +529,10 @@ def _handle_single(f, user, sid, sdir, filename, ext):
     is_admin_upload = bool(user.get('is_admin'))
     initial_status = 'approved' if (is_admin_upload or settings.get('auto_approve')) else 'pending'
     db.add_script(sid, user['uid'], filename, ext[1:], storage_path, status=initial_status)
+    try:
+        db.update_script(sid, {'env_vars': _upload_env_vars()})
+    except ValueError as exc:
+        return jsonify({'ok': False, 'error': str(exc)}), 400
 
     started = False
     start_message = ''
@@ -590,6 +608,10 @@ def _handle_zip(f, user, sid, sdir):
         initial_status = 'approved' if (is_admin_upload or settings.get('auto_approve')) else 'pending'
         storage_path = f"scripts/{user['uid']}/{sid}/" if uploaded_files else ''
         db.add_script(sid, user['uid'], main, main_type, storage_path, status=initial_status)
+        try:
+            db.update_script(sid, {'env_vars': _upload_env_vars()})
+        except ValueError as exc:
+            return jsonify({'ok': False, 'error': str(exc)}), 400
 
         started = False
         start_message = ''
