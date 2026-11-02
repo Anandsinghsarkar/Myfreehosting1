@@ -127,7 +127,7 @@ def upload_script_folder(local_dir, user_id, script_id):
     return uploaded
 
 
-def sync_script_folder(local_dir, user_id, script_id):
+def sync_script_folder(local_dir, user_id, script_id, prune=False):
     """Upload only new/changed files; remove stale remote objects for this bot."""
     if not os.path.isdir(local_dir):
         return False
@@ -152,7 +152,7 @@ def sync_script_folder(local_dir, user_id, script_id):
             ok = False
 
     # Prune only during explicit full syncs, not on the runner's periodic sync loop.
-    if os.environ.get("DBBYTE_PRUNE_ON_SYNC", "true").lower() == "true":
+    if prune or os.environ.get("DBBYTE_PRUNE_ON_SYNC", "false").lower() == "true":
         try:
             remote = [f for f in _list_all() if str(f.get("name", "")).startswith(prefix)]
             for item in remote:
