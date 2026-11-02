@@ -193,6 +193,21 @@ def _cleanup(script_id):
             pass
 
 
+def _sync_runtime_folder(script_id, user_id, script_dir, proc):
+    """Persist bot-created session/database files to Firebase while the process runs."""
+    import time
+    while proc.poll() is None:
+        time.sleep(60)
+        if proc.poll() is not None:
+            break
+        try:
+            from storage_helper import sync_script_folder
+            if not sync_script_folder(script_dir, user_id, script_id):
+                print(f"[FIREBASE] Runtime sync incomplete for bot {script_id}", flush=True)
+        except Exception as exc:
+            print(f"[FIREBASE] Runtime sync error for bot {script_id}: {exc}", flush=True)
+
+
 def start_script(script_id, user_id, file_path, file_type):
     if is_running(script_id):
         return False, "Script already running"
@@ -250,6 +265,12 @@ def start_script(script_id, user_id, file_path, file_type):
                 'user_id': user_id,
                 'type': file_type,
             }
+        threading.Thread(
+            target=_sync_runtime_folder,
+            args=(script_id, user_id, script_dir, proc),
+            name=f"firebase-sync-{script_id}",
+            daemon=True,
+        ).start()
         return True, f"Started (PID: {proc.pid})"
 
     except FileNotFoundError as e:
@@ -284,6 +305,14 @@ def stop_script(script_id):
     except Exception as e:
         return False, f"Error stopping: {e}"
     finally:
+        # Upload the final session/database/log changes before app.py clears the
+        # temporary Render working directory.
+        try:
+            from storage_helper import sync_script_folder
+            if not sync_script_folder(os.path.dirname(info['log_file'].name), info.get('user_id'), script_id):
+                return False, "Bot stopped, but Firebase sync was incomplete; local files were kept."
+        except Exception as exc:
+            return False, f"Bot stopped, Firebase sync failed; local files were kept: {exc}"
         _cleanup(script_id)
     return True, "Stopped"
 
