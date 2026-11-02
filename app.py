@@ -603,9 +603,8 @@ def _handle_single(f, user, sid, sdir, filename, ext, env_vars):
     db.add_script(sid, user['uid'], filename, ext[1:], storage_path, status=initial_status)
     db.update_script(sid, {'env_vars': env_vars})
 
-    # Preserve existing behavior: admin uploads auto-start; auto-approved
-    # non-admin uploads are approved and can be started from My Bots.
-    should_start = is_admin_upload
+    # Any approved upload can start; pending uploads wait for admin approval.
+    should_start = initial_status == 'approved'
     _queue_bot_deploy(
         sid, user['uid'], sdir,
         file_path=local_path if should_start else None,
@@ -613,7 +612,6 @@ def _handle_single(f, user, sid, sdir, filename, ext, env_vars):
         env_vars=env_vars,
     )
     started = False
-    start_message = 'Deployment queued in background.' if should_start else 'Saved on server; start from My Bots after approval.'
     script = db.get_script(sid) or {}
     notify_telegram_event('New file upload', {'User': user.get('name', user.get('email', user['uid'])), 'Email': user.get('email', ''), 'File': filename, 'Type': ext[1:], 'Status': script.get('status', initial_status), 'Started': started, 'Script ID': sid})
     try:
