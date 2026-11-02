@@ -399,6 +399,9 @@ def _handle_single(f, user, sid, sdir, filename, ext):
     # Firebase Storage is an optional mirror. The previous local upload flow must
     # keep working when Storage is not configured; if configured, deletion syncs too.
     storage_path = storage_helper.upload_script_file(local_path, user['uid'], sid, filename) or ''
+    if not storage_path:
+        shutil.rmtree(sdir, ignore_errors=True)
+        return jsonify({'ok': False, 'error': 'Firebase upload failed. Bot was not saved; check Firebase Storage configuration and permissions.'}), 502
 
     settings = db.get_settings()
     is_admin_upload = bool(user.get('is_admin'))
@@ -464,7 +467,10 @@ def _handle_zip(f, user, sid, sdir):
             elif os.path.exists(dst): os.remove(dst)
             shutil.move(src, dst)
 
-        # Optional Firebase mirror; do not block the previous local upload flow.
+        # Firebase is the persistent home for bot source, sessions and data.
+        if not storage_helper.sync_script_folder(sdir, user['uid'], sid):
+            shutil.rmtree(sdir, ignore_errors=True)
+            return jsonify({'ok': False, 'error': 'ZIP files could not all be saved to Firebase. Upload cancelled; check Firebase Storage permissions.'}), 502
         uploaded_files = storage_helper.upload_script_folder(sdir, user['uid'], sid)
 
         settings = db.get_settings()
@@ -546,8 +552,10 @@ def api_stop(sid):
 
     sdir = os.path.join(UPLOAD_DIR, str(s['user_id']), str(sid))
     ok, msg = runner.stop_script(sid)
-    if not ok:
-        return jsonify({'ok': False, 'message': msg}), 409
+    # A process may have exited on its own; that is not a reason to leave stale
+    # Render files behind. A sync failure is different and must preserve files.
+    if not ok and msg != "Not running" and "local files were kept" in msg:
+        return jsonify({'ok': False, 'message': msg}), 502
     try:
         # Also sync files if the bot had already exited before Stop was clicked.
         if os.path.isdir(sdir) and not storage_helper.sync_script_folder(sdir, s['user_id'], sid):
