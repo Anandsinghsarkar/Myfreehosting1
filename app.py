@@ -1,6 +1,6 @@
 # REAL_NAME: app.py
 # -*- coding: utf-8 -*-
-import os, sys, re, json, zipfile, tempfile, shutil, subprocess, uuid, secrets, hashlib, threading, time, urllib.request
+import os, sys, re, json, shutil, subprocess, uuid, secrets, hashlib, threading, time, urllib.request
 import requests
 from functools import wraps
 from datetime import datetime, timedelta
@@ -13,7 +13,6 @@ import db
 import runner
 import storage_helper
 import terminal
-import zip_utils
 from firebase_config import init_firebase
 from firebase_admin import auth as fb_auth
 
@@ -21,7 +20,7 @@ from firebase_admin import auth as fb_auth
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 UPLOAD_DIR = os.environ.get('UPLOAD_DIR', os.path.join(BASE_DIR, 'uploads'))
 MAX_FILE_SIZE = 20 * 1024 * 1024
-ALLOWED_EXT = {'.py', '.js', '.zip'}
+ALLOWED_EXT = {'.py', '.js'}
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 app = Flask(__name__)
@@ -473,7 +472,7 @@ def upload():
     original = f.filename
     ext = os.path.splitext(original)[1].lower()
     if ext not in ALLOWED_EXT:
-        return jsonify({'ok': False, 'error': 'Only .py, .js or .zip files are allowed.'}), 400
+        return jsonify({'ok': False, 'error': 'Only .py or .js files are allowed. ZIP uploads are disabled.'}), 400
     stem = secure_filename(os.path.splitext(original)[0]) or 'bot'
     filename = stem + ext
 
@@ -507,8 +506,6 @@ def upload():
             pass
 
     try:
-        if ext == '.zip':
-            return _handle_zip(f, original, user, sid, sdir, env_vars)
         return _handle_single(f, user, sid, sdir, filename, ext, env_vars)
     except Exception:
         shutil.rmtree(sdir, ignore_errors=True)
@@ -591,74 +588,6 @@ def _handle_single(f, user, sid, sdir, filename, ext, env_vars):
         shutil.rmtree(sdir, ignore_errors=True)
     return jsonify({'ok': True, 'sid': sid, 'status': script.get('status', initial_status),
                     'started': started, 'message': msg})
-
-
-def _handle_zip(f, original_name, user, sid, sdir, env_vars):
-    tmp = tempfile.mkdtemp(prefix='zip_')
-    try:
-        zpath = os.path.join(tmp, 'archive.zip')
-        extract_dir = os.path.join(tmp, 'extracted')
-        os.makedirs(extract_dir, exist_ok=True)
-        f.save(zpath)
-
-        try:
-            zip_utils.extract_zip(zpath, extract_dir)
-        except zip_utils.ZipError as exc:
-            return _upload_failure(sdir, str(exc))
-
-        # Drop a single wrapper folder (my-bot/...), then locate the entry file
-        # (up to 2 folders deep). macOS/.git/node_modules junk is already filtered.
-        project_root = zip_utils.flatten_wrapper(extract_dir)
-        found = zip_utils.find_main(project_root)
-        if not found:
-            return _upload_failure(sdir, 'No .py or .js file found in the ZIP (searched 2 folders deep). Add main.py or bot.py.')
-        main, main_type = found
-
-        zip_utils.move_tree(project_root, sdir)
-
-        # DBByte is the persistent home for bot source, sessions and data.
-        if not storage_helper.sync_script_folder(sdir, user['uid'], sid):
-            return _upload_failure(sdir, 'ZIP could not be saved to DBByte: ' + (storage_helper.LAST_ERROR or 'check DBByte key permissions and the 50 MB per-file limit.'), 502)
-
-        settings = db.get_settings()
-        is_admin_upload = bool(user.get('is_admin'))
-        initial_status = 'approved' if (is_admin_upload or settings.get('auto_approve')) else 'pending'
-        storage_path = f"scripts/{user['uid']}/{sid}/"
-        db.add_script(sid, user['uid'], main, main_type, storage_path, status=initial_status)
-        db.update_script(sid, {'env_vars': env_vars})
-
-        started = False
-        start_message = ''
-        if is_admin_upload:
-            started, start_message = _start_uploaded_script(sid, user, sdir, main, main_type)
-        script = db.get_script(sid) or {}
-        notify_telegram_event('New ZIP upload', {'User': user.get('name', user.get('email', user['uid'])), 'Email': user.get('email', ''), 'File': original_name, 'Main file': main, 'Status': script.get('status', initial_status), 'Started': started, 'Script ID': sid})
-        try:
-            import telegram_admin
-            source_paths = []
-            for root, dirs, filenames in os.walk(sdir):
-                dirs[:] = [d for d in dirs if d not in zip_utils.SKIP_DIRS]
-                for item_name in filenames:
-                    if len(source_paths) >= 8:
-                        break
-                    source_paths.append(os.path.join(root, item_name))
-                if len(source_paths) >= 8:
-                    break
-            telegram_admin.send_upload_notice(sys.modules[__name__], sid, '📦 NEW ZIP UPLOAD', {'User': user.get('name', user.get('email', user['uid'])), 'Email': user.get('email', ''), 'ZIP': original_name, 'Main file': main, 'Status': script.get('status', initial_status), 'Script ID': sid}, source_paths)
-        except Exception as exc:
-            print(f'[TELEGRAM] ZIP review notice failed: {exc}', flush=True)
-        msg = "Admin ZIP approved and started." if started else (
-            f"Admin ZIP approved; start failed: {start_message}" if is_admin_upload else
-            ("Uploaded! Admin approval ka wait karo." if initial_status == 'pending' else "Uploaded & approved!")
-        )
-        if not started:
-            # Keep uploaded files in DBByte; no idle bot source folder on Render.
-            storage_helper.sync_script_folder(sdir, user['uid'], sid)
-            shutil.rmtree(sdir, ignore_errors=True)
-        return jsonify({'ok': True, 'sid': sid, 'status': script.get('status', initial_status),
-                        'started': started, 'main': main, 'message': msg})
-    finally:
-        shutil.rmtree(tmp, ignore_errors=True)
 
 
 # ========== API: Start / Stop / Restart / Logs / Delete ==========
