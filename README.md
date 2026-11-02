@@ -37,3 +37,10 @@ Create a private DBByte bucket (for example `cyber-bot-storage`) and an API key 
 The backend stores bot files as private objects, restores them before starting a bot, syncs changed runtime files, and deletes the bot's cloud objects when the bot is deleted. The admin storage monitor reads actual object sizes and counts from DBByte.
 
 DBByte's current REST API has a 50 MB per-object upload limit. The website's normal upload limit is currently 20 MB. The free plan has usage caps, so monitor storage, bandwidth, and request usage in the DBByte dashboard. Never expose the API key in frontend JavaScript or share it in screenshots.
+
+
+### Storage monitor capacity settings
+
+- `DBBYTE_QUOTA_GB`: displayed DBByte allowance in GiB; defaults to `20`. The used bytes and object count are read from the bucket listing; the quota is a configured allowance and is not independently verified against DBByte billing.
+- `RENDER_APP_STORAGE_QUOTA_MB`: app-managed upload/temp-file allowance shown in the Render card; defaults to `512`. The used value counts files under the application's upload directory, not every byte used by the Render host/container.
+- The admin storage monitor refreshes automatically every 5 seconds.
