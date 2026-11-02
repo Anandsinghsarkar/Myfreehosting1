@@ -2,16 +2,16 @@
 {% block title %}Deploy Bot{% endblock %}
 {% block content %}
 <h1 class="page-title"><svg class="ic ic-lg"><use href="#i-upload"/></svg>Deploy a bot</h1>
-<p class="page-sub">Upload a script or a full project ZIP, or paste your code. Dependencies are installed automatically.</p>
+<p class="page-sub">Upload a Python or JavaScript script, or paste Python code.</p>
 
 <div class="card" style="max-width:780px;">
-    <div class="card-header"><h3><svg class="ic"><use href="#i-folder"/></svg>Upload file or ZIP</h3></div>
+    <div class="card-header"><h3><svg class="ic"><use href="#i-folder"/></svg>Upload script</h3></div>
     <form id="uploadForm" novalidate>
         <label class="dropzone" id="dropzone" for="fileInput">
             <span class="dz-icon"><svg class="ic"><use href="#i-upload"/></svg></span>
             <b>Drop your file here or tap to browse</b>
-            <span class="muted small">.py, .js or .zip &middot; up to 20 MB</span>
-            <input type="file" id="fileInput" accept=".py,.js,.zip">
+            <span class="muted small">.py or .js &middot; up to 20 MB</span>
+            <input type="file" id="fileInput" accept=".py,.js">
         </label>
 
         <div class="file-chip" id="fileChip">
@@ -21,11 +21,7 @@
             <button type="button" class="icon-btn" id="fcClear" aria-label="Remove file"><svg class="ic ic-sm"><use href="#i-x"/></svg></button>
         </div>
 
-        <p class="muted small" style="margin-top:12px;">
-            ZIP tips: put <code>main.py</code> or <code>bot.py</code> at the top (or one folder deep) and add <code>requirements.txt</code> for Python or <code>package.json</code> for Node. Junk such as <code>__MACOSX</code>, <code>.git</code>, <code>node_modules</code> and <code>__pycache__</code> is skipped automatically.
-        </p>
-
-        <label for="uploadEnv" style="margin-top:14px;">Environment variables (JSON)</label>
+<label for="uploadEnv" style="margin-top:14px;">Environment variables (JSON)</label>
         <textarea id="uploadEnv" spellcheck="false" style="min-height:84px;font-family:ui-monospace,Menlo,monospace;" placeholder='{"BOT_TOKEN": "123456:ABC..."}'>{}</textarea>
 
         <div class="progress" id="progress"><div id="progressBar"></div></div>
@@ -63,7 +59,7 @@
 <script>
 (function () {
     const MAX = 20 * 1024 * 1024;
-    const ALLOWED = ['.py', '.js', '.zip'];
+    const ALLOWED = ['.py', '.js'];
     const $ = (id) => document.getElementById(id);
     const fileInput = $('fileInput'), dz = $('dropzone'), chip = $('fileChip');
     const btn = $('uploadBtn'), status = $('uploadStatus'), prog = $('progress'), bar = $('progressBar');
@@ -76,7 +72,7 @@
         file = null; chip.classList.remove('show'); btn.disabled = true; say(status, '');
         if (!f) return;
         const ext = (f.name.match(/\.[^.]+$/) || [''])[0].toLowerCase();
-        if (!ALLOWED.includes(ext)) { say(status, 'Only .py, .js or .zip files are allowed.', 'err'); return; }
+        if (!ALLOWED.includes(ext)) { say(status, 'Only .py or .js files are allowed.', 'err'); return; }
         if (f.size > MAX) { say(status, 'File is ' + size(f.size) + ' — the limit is 20 MB.', 'err'); return; }
         file = f;
         $('fcName').textContent = f.name; $('fcSize').textContent = size(f.size);
@@ -124,7 +120,7 @@
         };
         xhr.upload.onload = () => {
             prog.classList.add('indeterminate');
-            say(status, file.name.toLowerCase().endsWith('.zip') ? 'Extracting ZIP and saving to storage…' : 'Saving to storage…');
+            say(status, 'Saving script to storage…');
         };
         function fail(msg) { prog.classList.remove('show', 'indeterminate'); say(status, msg, 'err'); btn.disabled = false; }
 
@@ -144,7 +140,7 @@
             }
         };
         xhr.onerror = () => fail('Network error. Check your connection and try again.');
-        xhr.ontimeout = () => fail('Timed out while processing. Try a smaller ZIP.');
+        xhr.ontimeout = () => fail('Timed out while processing. Try a smaller script file.');
         xhr.send(fd);
     });
 
