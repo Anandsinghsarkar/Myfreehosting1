@@ -22,3 +22,18 @@ The scheduled job is best-effort: GitHub may delay scheduled runs, so a request 
 ## Important Render notes
 
 Render Free web services can spin down after 15 minutes without inbound traffic. Their local filesystem is ephemeral, and free services can restart. Keep important user and bot data in an external persistent database or object storage rather than relying on local files.
+
+
+## DBByte object storage (bot files and runtime backups)
+
+The application uses DBByte for persistent bot files. Firebase Authentication and Firestore are still used for login and app records (users, scripts, plans, and settings); do not remove the Firebase service-account or Firebase web-auth environment variables.
+
+Create a private DBByte bucket (for example `cyber-bot-storage`) and an API key scoped to that bucket with **Read**, **Write**, and **Delete** permissions. Add these environment variables to Render:
+
+- `DBBYTE_API_KEY`: DBByte API key (keep secret).
+- `DBBYTE_BUCKET`: exact bucket slug, e.g. `cyber-bot-storage`.
+- `DBBYTE_API_URL`: `https://api.dbbyte.com` (optional; this is the default).
+
+The backend stores bot files as private objects, restores them before starting a bot, syncs changed runtime files, and deletes the bot's cloud objects when the bot is deleted. The admin storage monitor reads actual object sizes and counts from DBByte.
+
+DBByte's current REST API has a 50 MB per-object upload limit. The website's normal upload limit is currently 20 MB. The free plan has usage caps, so monitor storage, bandwidth, and request usage in the DBByte dashboard. Never expose the API key in frontend JavaScript or share it in screenshots.
