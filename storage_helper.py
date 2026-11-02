@@ -3,11 +3,17 @@
 DBByte REST storage adapter.
 Persistent bot objects are private and namespaced by user + bot. Firebase remains
 in use only for Authentication and Firestore application records.
+
+Sync rules: dependency/cache folders (.packages, node_modules, __pycache__ ...)
+are never uploaded - they are rebuilt from requirements.txt / package.json on
+start. Uploads run in parallel over a shared HTTP session.
 """
 import os
 import time
 import base64
 import hashlib
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import quote
 import requests
 
@@ -16,7 +22,23 @@ API_KEY = os.environ.get("DBBYTE_API_KEY", "").strip()
 BUCKET = os.environ.get("DBBYTE_BUCKET", "cyber-bot-storage").strip()
 TIMEOUT = (10, 90)
 MAX_OBJECT_BYTES = 50 * 1024 * 1024
+MAX_REMOTE_NAME = 240
+UPLOAD_WORKERS = max(1, min(12, int(os.environ.get("DBBYTE_UPLOAD_WORKERS", "6"))))
+USAGE_CACHE_SECONDS = 8
+
+EXCLUDE_DIRS = {
+    ".packages", "node_modules", "__pycache__", ".git", "__MACOSX",
+    ".venv", "venv", ".cache", ".mypy_cache", ".pytest_cache",
+}
+EXCLUDE_FILES = {".DS_Store", "Thumbs.db"}
+
 _SYNC_CACHE = {}
+_SESSION = requests.Session()
+_USAGE_LOCK = threading.Lock()
+_USAGE_CACHE = {"at": 0.0, "data": None}
+
+# Last human-readable upload failure; shown to the user by the upload routes.
+LAST_ERROR = ""
 
 
 class DBByteError(RuntimeError):
@@ -41,7 +63,7 @@ def _url(path):
 
 def _request(method, path, **kwargs):
     try:
-        response = requests.request(method, _url(path), headers=_headers(), timeout=TIMEOUT, **kwargs)
+        response = _SESSION.request(method, _url(path), headers=_headers(), timeout=TIMEOUT, **kwargs)
     except requests.RequestException as exc:
         raise DBByteError(f"DBByte connection failed: {exc}") from exc
     if not response.ok:
@@ -78,6 +100,23 @@ def _decode_relative(remote_name):
         return None
 
 
+def _excluded_rel(rel):
+    return any(p in EXCLUDE_DIRS for p in rel.split("/")[:-1])
+
+
+def _iter_local_files(local_dir):
+    """Yield (absolute_path, relative_posix_path) for every syncable file."""
+    for root, dirs, filenames in os.walk(local_dir):
+        dirs[:] = [d for d in dirs if d not in EXCLUDE_DIRS and not os.path.islink(os.path.join(root, d))]
+        for filename in filenames:
+            if filename in EXCLUDE_FILES or filename.endswith(".pyc"):
+                continue
+            path = os.path.join(root, filename)
+            if os.path.islink(path):
+                continue
+            yield path, os.path.relpath(path, local_dir).replace("\\", "/")
+
+
 def _list_all():
     files, cursor = [], None
     while True:
@@ -93,9 +132,12 @@ def _list_all():
 
 
 def upload_script_file(local_path, user_id, script_id, filename):
+    global LAST_ERROR
     try:
         relative = str(filename).replace("\\", "/")
         remote_name = _remote_name(user_id, script_id, relative)
+        if len(remote_name) > MAX_REMOTE_NAME:
+            raise DBByteError(f"Path too long for storage: {relative[:80]}... Shorten folder/file names.")
         size = os.path.getsize(local_path)
         if size > MAX_OBJECT_BYTES:
             raise DBByteError(f"{filename} exceeds DBByte's 50 MB per-file upload limit.")
@@ -105,61 +147,58 @@ def upload_script_file(local_path, user_id, script_id, filename):
                 params={"overwrite": "true"},
                 files={"file": (remote_name, handle, "application/octet-stream")},
             )
-        _SYNC_CACHE[(str(user_id), str(script_id), relative)] = (os.path.getsize(local_path), os.stat(local_path).st_mtime_ns)
+        stat = os.stat(local_path)
+        _SYNC_CACHE[(str(user_id), str(script_id), relative)] = (stat.st_size, stat.st_mtime_ns)
         return response.json().get("key") or remote_name
     except Exception as exc:
+        LAST_ERROR = str(exc)
         print(f"[DBBYTE] Upload failed for {script_id}/{filename}: {exc}", flush=True)
         return None
 
 
 def upload_script_folder(local_dir, user_id, script_id):
+    items = list(_iter_local_files(local_dir))
     uploaded = {}
-    for root, dirs, filenames in os.walk(local_dir):
-        dirs[:] = [d for d in dirs if not os.path.islink(os.path.join(root, d))]
-        for filename in filenames:
-            path = os.path.join(root, filename)
-            if os.path.islink(path):
-                continue
-            rel = os.path.relpath(path, local_dir).replace("\\", "/")
-            remote = upload_script_file(path, user_id, script_id, rel)
+    if not items:
+        return uploaded
+    with ThreadPoolExecutor(max_workers=UPLOAD_WORKERS) as pool:
+        results = pool.map(lambda it: (it[1], upload_script_file(it[0], user_id, script_id, it[1])), items)
+        for rel, remote in results:
             if remote:
                 uploaded[rel] = remote
     return uploaded
 
 
 def sync_script_folder(local_dir, user_id, script_id, prune=False):
-    """Upload only new/changed files; remove stale remote objects for this bot."""
+    """Upload only new/changed files (in parallel); optionally prune stale remote objects."""
+    global LAST_ERROR
     if not os.path.isdir(local_dir):
         return False
+    LAST_ERROR = ""
     expected = {}
-    for root, dirs, filenames in os.walk(local_dir):
-        dirs[:] = [d for d in dirs if not os.path.islink(os.path.join(root, d))]
-        for filename in filenames:
-            path = os.path.join(root, filename)
-            if os.path.islink(path):
-                continue
-            rel = os.path.relpath(path, local_dir).replace("\\", "/")
-            stat = os.stat(path)
-            expected[rel] = (stat.st_size, stat.st_mtime_ns)
+    for path, rel in _iter_local_files(local_dir):
+        stat = os.stat(path)
+        expected[rel] = (path, (stat.st_size, stat.st_mtime_ns))
 
-    prefix = f"scripts--{_uid_tag(user_id)}--{script_id}--"
-    cache_prefix = (str(user_id), str(script_id))
+    uid, sid = str(user_id), str(script_id)
+    pending = [(path, rel) for rel, (path, sig) in expected.items()
+               if _SYNC_CACHE.get((uid, sid, rel)) != sig]
     ok = True
-    for rel, signature in expected.items():
-        if _SYNC_CACHE.get((cache_prefix[0], cache_prefix[1], rel)) == signature:
-            continue
-        if not upload_script_file(os.path.join(local_dir, rel), user_id, script_id, rel):
-            ok = False
+    if pending:
+        with ThreadPoolExecutor(max_workers=UPLOAD_WORKERS) as pool:
+            results = list(pool.map(lambda it: upload_script_file(it[0], user_id, script_id, it[1]), pending))
+        ok = all(results)
 
     # Prune only during explicit full syncs, not on the runner's periodic sync loop.
     if prune or os.environ.get("DBBYTE_PRUNE_ON_SYNC", "false").lower() == "true":
         try:
+            prefix = f"scripts--{_uid_tag(user_id)}--{script_id}--"
             remote = [f for f in _list_all() if str(f.get("name", "")).startswith(prefix)]
             for item in remote:
                 rel = _decode_relative(str(item.get("name", "")))
-                if rel and rel not in expected:
+                if rel and (rel not in expected or _excluded_rel(rel)):
                     _delete_remote_name(str(item["name"]))
-                    _SYNC_CACHE.pop((str(user_id), str(script_id), rel), None)
+                    _SYNC_CACHE.pop((uid, sid, rel), None)
         except Exception as exc:
             print(f"[DBBYTE] Stale-file cleanup warning for {script_id}: {exc}", flush=True)
             # Do not fail a successful upload because list/delete cleanup failed.
@@ -172,26 +211,28 @@ def download_script_folder(user_id, script_id, dest_dir):
         objects = [f for f in _list_all() if str(f.get("name", "")).startswith(prefix)]
         if not objects:
             return False
+        dest_abs = os.path.abspath(dest_dir)
         count = 0
         for item in objects:
             remote_name = str(item.get("name", ""))
             rel = _decode_relative(remote_name)
-            if not rel:
-                continue
+            if not rel or _excluded_rel(rel):
+                continue  # skip legacy dependency folders uploaded by older versions
             response = _request(
                 "GET",
                 f"/storage/{quote(BUCKET, safe='')}/download/{quote(remote_name, safe='')}",
                 stream=True,
             )
             target = os.path.abspath(os.path.join(dest_dir, *rel.split("/")))
-            if not target.startswith(os.path.abspath(dest_dir) + os.sep):
+            if not target.startswith(dest_abs + os.sep):
                 continue
             os.makedirs(os.path.dirname(target), exist_ok=True)
             with open(target, "wb") as out:
                 for chunk in response.iter_content(1024 * 256):
                     if chunk:
                         out.write(chunk)
-            _SYNC_CACHE[(str(user_id), str(script_id), rel)] = (os.path.getsize(target), os.stat(target).st_mtime_ns)
+            stat = os.stat(target)
+            _SYNC_CACHE[(str(user_id), str(script_id), rel)] = (stat.st_size, stat.st_mtime_ns)
             count += 1
         print(f"[DBBYTE] Downloaded {count} files for bot {script_id}", flush=True)
         return count > 0
@@ -246,8 +287,7 @@ def upload_qr_image(local_path, filename):
     return None
 
 
-def get_storage_usage():
-    """Return measured bucket object usage plus the configured free-plan allowance."""
+def _measure_storage_usage():
     quota_gb = max(0.1, float(os.environ.get("DBBYTE_QUOTA_GB", "20")))
     quota_bytes = int(quota_gb * 1024 ** 3)
     result = {
@@ -278,3 +318,14 @@ def get_storage_usage():
     except Exception as exc:
         result["error"] = str(exc)
     return result
+
+
+def get_storage_usage():
+    """Measured bucket usage, cached briefly so the live monitor cannot hammer DBByte."""
+    with _USAGE_LOCK:
+        now = time.time()
+        if _USAGE_CACHE["data"] is not None and now - _USAGE_CACHE["at"] < USAGE_CACHE_SECONDS:
+            return dict(_USAGE_CACHE["data"])
+        data = _measure_storage_usage()
+        _USAGE_CACHE.update({"at": now, "data": data})
+        return dict(data)
