@@ -208,7 +208,7 @@ def _sync_runtime_folder(script_id, user_id, script_dir, proc):
             print(f"[DBBYTE] Runtime sync error for bot {script_id}: {exc}", flush=True)
 
 
-def start_script(script_id, user_id, file_path, file_type):
+def start_script(script_id, user_id, file_path, file_type, env_vars=None):
     if is_running(script_id):
         return False, "Script already running"
 
@@ -224,10 +224,38 @@ def start_script(script_id, user_id, file_path, file_type):
     log_file = open(log_path, 'a', encoding='utf-8', errors='ignore')
     cmd = [sys.executable, file_path] if file_type == 'py' else ['node', file_path]
 
-    log_file.write(f"\n\n===== Starting {datetime.now().isoformat()} =====\n")
+    log_file.write(f"\n\n===== Deploy started {datetime.now().isoformat()} =====\n")
     log_file.flush()
-
+    child_env = os.environ.copy()
+    if isinstance(env_vars, dict):
+        for key, value in env_vars.items():
+            if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,127}", str(key)):
+                child_env[str(key)] = str(value)
     try:
+        req_path = os.path.join(script_dir, "requirements.txt")
+        if file_type == "py" and os.path.isfile(req_path):
+            with open(req_path, "r", encoding="utf-8", errors="ignore") as rf:
+                req_text = rf.read()
+            if len(req_text) > 20000:
+                raise RuntimeError("requirements.txt exceeds 20 KB limit")
+            packages_dir = os.path.join(script_dir, ".packages")
+            os.makedirs(packages_dir, exist_ok=True)
+            log_file.write("[SYSTEM] Installing requirements.txt into bot-local packages...\n")
+            log_file.flush()
+            install = subprocess.run([sys.executable, "-m", "pip", "install", "--disable-pip-version-check", "--no-cache-dir", "--target", packages_dir, "-r", req_path], cwd=script_dir, capture_output=True, text=True, encoding="utf-8", errors="ignore", timeout=300)
+            log_file.write((install.stdout or "")[-12000:] + (install.stderr or "")[-12000:])
+            if install.returncode != 0:
+                raise RuntimeError("requirements.txt installation failed; see install log")
+            child_env["PYTHONPATH"] = packages_dir + os.pathsep + child_env.get("PYTHONPATH", "")
+        elif file_type == "js" and os.path.isfile(os.path.join(script_dir, "package.json")):
+            log_file.write("[SYSTEM] Installing package.json dependencies...\n")
+            log_file.flush()
+            install = subprocess.run(["npm", "install", "--no-audit", "--no-fund"], cwd=script_dir, capture_output=True, text=True, encoding="utf-8", errors="ignore", timeout=300)
+            log_file.write((install.stdout or "")[-12000:] + (install.stderr or "")[-12000:])
+            if install.returncode != 0:
+                raise RuntimeError("npm install failed; see install log")
+        log_file.write("[SYSTEM] Dependencies ready. Launching process...\n")
+        log_file.flush()
         missing = _precheck(cmd, script_dir, log_file)
         if missing:
             log_file.write(f"[SYSTEM] Missing module: {missing}\n")
@@ -254,7 +282,7 @@ def start_script(script_id, user_id, file_path, file_type):
         proc = subprocess.Popen(
             cmd, cwd=script_dir,
             stdout=log_file, stderr=subprocess.STDOUT,
-            stdin=subprocess.DEVNULL, **kwargs
+            stdin=subprocess.DEVNULL, env=child_env, **kwargs
         )
 
         with LOCK:
@@ -268,9 +296,10 @@ def start_script(script_id, user_id, file_path, file_type):
         threading.Thread(
             target=_sync_runtime_folder,
             args=(script_id, user_id, script_dir, proc),
-            name=f"firebase-sync-{script_id}",
+            name=f"dbbyte-sync-{script_id}",
             daemon=True,
         ).start()
+        threading.Thread(target=_watch_exit, args=(script_id, proc), name=f"bot-watch-{script_id}", daemon=True).start()
         return True, f"Started (PID: {proc.pid})"
 
     except FileNotFoundError as e:
@@ -279,6 +308,24 @@ def start_script(script_id, user_id, file_path, file_type):
     except Exception as e:
         log_file.close()
         return False, f"Error: {e}"
+
+
+
+def _watch_exit(script_id, proc):
+    try:
+        code = proc.wait()
+        with LOCK:
+            info = RUNNING.get(script_id)
+            if info and info.get('proc') is proc:
+                _cleanup(script_id)
+        try:
+            from db import update_script
+            update_script(script_id, {'running': False, 'status': 'stopped' if code == 0 else 'failed', 'last_exit_code': int(code), 'last_exit_at': datetime.now().isoformat()})
+        except Exception as exc:
+            print(f'[RUNNER] Could not persist exit status for {script_id}: {exc}', flush=True)
+        print(f'[RUNNER] Bot {script_id} exited with code {code}', flush=True)
+    except Exception as exc:
+        print(f'[RUNNER] Exit watcher error for {script_id}: {exc}', flush=True)
 
 
 def stop_script(script_id):
