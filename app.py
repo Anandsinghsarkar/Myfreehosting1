@@ -563,10 +563,19 @@ def _handle_zip(f, user, sid, sdir):
         zpath = os.path.join(tmp, 'archive.zip')
         f.save(zpath)
         with zipfile.ZipFile(zpath) as z:
-            for m in z.infolist():
-                p = os.path.abspath(os.path.join(tmp, m.filename))
-                if not p.startswith(os.path.abspath(tmp)):
-                    return jsonify({'ok': False, 'error': 'Unsafe zip'}), 400
+            members = z.infolist()
+            if len(members) > 500:
+                return jsonify({'ok': False, 'error': 'ZIP contains too many files (max 500).'}), 400
+            if sum(int(m.file_size or 0) for m in members) > 100 * 1024 * 1024:
+                return jsonify({'ok': False, 'error': 'Expanded ZIP size exceeds 100 MB.'}), 400
+            root_real = os.path.realpath(tmp)
+            for m in members:
+                target = os.path.realpath(os.path.join(tmp, m.filename))
+                if os.path.commonpath([root_real, target]) != root_real:
+                    return jsonify({'ok': False, 'error': 'Unsafe ZIP path.'}), 400
+                unix_mode = (m.external_attr >> 16) & 0o170000
+                if unix_mode == 0o120000:
+                    return jsonify({'ok': False, 'error': 'ZIP symlinks are not allowed.'}), 400
             z.extractall(tmp)
 
         items = os.listdir(tmp)
