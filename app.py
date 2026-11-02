@@ -396,10 +396,10 @@ def _handle_single(f, user, sid, sdir, filename, ext):
     with open(local_path, 'wb') as out:
         out.write(content)
 
-    # Firebase Storage is an optional mirror. The previous local upload flow must
-    # keep working when Storage is not configured; if configured, deletion syncs too.
-    storage_path = storage_helper.upload_script_file(local_path, user['uid'], sid, filename) or ''
-    if not storage_path:
+    # Store every initial file (main source + requirements) in Firebase.
+    synced = storage_helper.sync_script_folder(sdir, user['uid'], sid)
+    storage_path = f"scripts/{user['uid']}/{sid}/" if synced else ''
+    if not synced:
         shutil.rmtree(sdir, ignore_errors=True)
         return jsonify({'ok': False, 'error': 'Firebase upload failed. Bot was not saved; check Firebase Storage configuration and permissions.'}), 502
 
@@ -471,7 +471,7 @@ def _handle_zip(f, user, sid, sdir):
         if not storage_helper.sync_script_folder(sdir, user['uid'], sid):
             shutil.rmtree(sdir, ignore_errors=True)
             return jsonify({'ok': False, 'error': 'ZIP files could not all be saved to Firebase. Upload cancelled; check Firebase Storage permissions.'}), 502
-        uploaded_files = storage_helper.upload_script_folder(sdir, user['uid'], sid)
+        uploaded_files = True  # sync_script_folder above verified the complete upload
 
         settings = db.get_settings()
         is_admin_upload = bool(user.get('is_admin'))
