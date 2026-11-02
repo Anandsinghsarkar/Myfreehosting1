@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}Edit Bot{% endblock %}
+{% block content %}
+<div class="row-between mb-3"><h1 class="page-title">🧑‍💻 Edit & Redeploy</h1><a class="btn btn-ghost btn-sm" href="{{ url_for('my_bots') }}">Back</a></div>
+<div class="card"><p class="muted small">Changes are saved to DBByte. If running, the bot restarts after saving.</p>
+<label>Python source — {{ script.name }}</label><textarea id="code" spellcheck="false" style="width:100%;min-height:420px;font-family:monospace;white-space:pre;">{{ code }}</textarea>
+<label style="margin-top:14px;">Environment variables (JSON key/value)</label><textarea id="env" spellcheck="false" style="width:100%;min-height:130px;font-family:monospace;">{{ env_json }}</textarea>
+<button class="btn btn-primary" id="save" style="margin-top:14px;" onclick="saveBot()">💾 Save & Redeploy</button><div id="status" class="muted small" style="margin-top:10px;"></div></div>
+<script>
+async function saveBot(){const b=document.getElementById('save'),s=document.getElementById('status');let env;try{env=JSON.parse(document.getElementById('env').value||'{}');if(!env||Array.isArray(env)||typeof env!=='object')throw Error();}catch(e){s.textContent='Invalid environment JSON';return;}b.disabled=true;s.textContent='Saving to DBByte…';try{const r=await fetch(location.pathname,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code:document.getElementById('code').value,env_vars:env})});const d=await r.json();s.textContent=(d.ok?'✅ ':'❌ ')+(d.message||d.error||'');}catch(e){s.textContent='❌ '+e.message;}b.disabled=false;}
+</script>
+{% endblock %}
