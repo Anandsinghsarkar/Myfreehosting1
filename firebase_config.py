@@ -202,3 +202,14 @@ def get_bucket():
     if not _initialized:
         init_firebase()
     return _bucket
+
+
+def get_storage_diagnostics():
+    """Return non-secret Firebase Storage configuration details for the admin monitor."""
+    if not _initialized:
+        init_firebase()
+    return {
+        'bucket': _storage_bucket_name or '',
+        'service_account_project': _storage_project_id or '',
+        'available': _bucket is not None,
+    }
