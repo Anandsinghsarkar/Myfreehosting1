@@ -20,6 +20,9 @@ KEY_PATH = os.environ.get('FIREBASE_KEY_PATH',
 
 _db = None
 _bucket = None
+_firebase_app = None
+_storage_bucket_name = ''
+_storage_project_id = ''
 _initialized = False
 
 
@@ -118,54 +121,72 @@ def _validate_private_key(cred_dict):
 
 
 def init_firebase():
-    global _db, _bucket, _initialized
+    global _db, _bucket, _firebase_app, _storage_bucket_name, _storage_project_id, _initialized
     if _initialized:
         return _db, _bucket
 
     print("=" * 60, flush=True)
-    print("🔥 Firebase init starting...", flush=True)
-
+    print("[FIREBASE] Initialization starting", flush=True)
     try:
         cred_dict = _load_credentials()
-
-        # Validate PEM before creating credential
-        print(f"   PK length: {len(cred_dict.get('private_key', ''))}", flush=True)
-        pk = cred_dict.get('private_key', '')
-        print(f"   PK start: {repr(pk[:40])}", flush=True)
-        print(f"   PK end:   {repr(pk[-40:])}", flush=True)
+        _storage_project_id = str(cred_dict.get('project_id', '')).strip()
+        print(f"[FIREBASE] Service-account project: {_storage_project_id or 'unknown'}", flush=True)
 
         if not _validate_private_key(cred_dict):
-            raise RuntimeError(
-                "Private key is invalid. Regenerate service account key from "
-                "Firebase Console and re-upload as FIREBASE_KEY_B64."
-            )
+            raise RuntimeError("Firebase private key is invalid. Recreate the service-account key.")
 
         cred = credentials.Certificate(cred_dict)
-        print("✅ Certificate created", flush=True)
-
-        bucket_name = (os.environ.get('FIREBASE_STORAGE_BUCKET', '').strip() or
-                       os.environ.get('FB_STORAGE_BUCKET', '').strip())
+        requested_bucket = (
+            os.environ.get('FIREBASE_STORAGE_BUCKET', '').strip()
+            or os.environ.get('FB_STORAGE_BUCKET', '').strip()
+        ).removeprefix('gs://').rstrip('/')
 
         if not firebase_admin._apps:
-            firebase_admin.initialize_app(cred, {'storageBucket': bucket_name})
+            _firebase_app = firebase_admin.initialize_app(
+                cred, {'storageBucket': requested_bucket} if requested_bucket else {}
+            )
+        else:
+            _firebase_app = firebase_admin.get_app()
 
-        _db = firestore.client()
-        print("✅ Firestore connected", flush=True)
+        _db = firestore.client(app=_firebase_app)
+        print("[FIREBASE] Firestore connected", flush=True)
 
-        try:
-            _bucket = storage.bucket()
-            print(f"✅ Storage bucket: {bucket_name or '(default)'}", flush=True)
-        except Exception as e:
-            print(f"⚠️ Storage bucket failed: {e}", flush=True)
-            _bucket = None
+        candidates = []
+        if requested_bucket:
+            candidates.append(requested_bucket)
+        if _storage_project_id:
+            for suffix in ('.firebasestorage.app', '.appspot.com'):
+                candidate = _storage_project_id + suffix
+                if candidate not in candidates:
+                    candidates.append(candidate)
+
+        _bucket = None
+        last_error = None
+        for candidate in candidates:
+            try:
+                candidate_bucket = storage.bucket(candidate, app=_firebase_app)
+                if candidate_bucket.exists():
+                    _bucket = candidate_bucket
+                    _storage_bucket_name = candidate
+                    print(f"[FIREBASE] Verified Storage bucket: {candidate}", flush=True)
+                    break
+                print(f"[FIREBASE] Bucket does not exist: {candidate}", flush=True)
+            except Exception as exc:
+                last_error = exc
+                print(f"[FIREBASE] Bucket probe failed for {candidate}: {type(exc).__name__}: {exc}", flush=True)
+                if getattr(exc, 'code', None) in (401, 403):
+                    break
+
+        if _bucket is None:
+            _storage_bucket_name = requested_bucket
+            print(f"[FIREBASE] No verified Storage bucket. Last error: {last_error or 'bucket not found'}", flush=True)
 
         _initialized = True
-        print("✅ Firebase fully initialized", flush=True)
+        print(f"[FIREBASE] Initialization complete; bucket={_storage_bucket_name or 'UNSET'}", flush=True)
         print("=" * 60, flush=True)
         return _db, _bucket
-
-    except Exception as e:
-        print(f"❌ Firebase init FAILED: {e}", flush=True)
+    except Exception as exc:
+        print(f"[FIREBASE] Initialization FAILED: {type(exc).__name__}: {exc}", flush=True)
         traceback.print_exc()
         print("=" * 60, flush=True)
         raise
