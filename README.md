@@ -58,6 +58,6 @@ DBByte's current REST API has a 50 MB per-object upload limit. The website's nor
 
 Render runs these bot processes on the same service/container as the website. This implementation does not provide a hardened per-customer OS/container sandbox. Keep user uploads behind admin approval, only run code you trust, and do not enable automatic approval for untrusted users. Do not put platform-wide secrets in a bot's environment; only supply credentials intended for that bot. Resource-heavy dependencies may exceed the available memory/disk.
 ### Upload and persistence order
-- `.py`/`.js` uploads are first written to the Render runtime folder. Approved admin bots are launched in a background task; DBByte backup starts after launch. Pending uploads are backed up after local receipt so they survive while awaiting approval.
+- `.py`/`.js` uploads are first written to the Render runtime folder. Approved bots are launched in a background task; DBByte backup starts after launch. Pending uploads are backed up after local receipt so they survive while awaiting approval.
 - DBByte backup no longer blocks the browser upload request. If the backup fails, the bot remains on Render and the failure is written to Render logs; check backup status before relying on a redeploy.
 - Render's local filesystem is ephemeral: after a service restart/redeploy, bot source/session files must be restored from DBByte.
