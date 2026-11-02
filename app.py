@@ -423,6 +423,10 @@ def _handle_single(f, user, sid, sdir, filename, ext):
         f"Admin upload approved; start failed: {start_message}" if is_admin_upload else
         ("Uploaded! Admin approval ka wait karo." if initial_status == 'pending' else "Uploaded & approved!")
     )
+    if not started:
+        # The durable copy is already in Firebase; keep Render free while stopped/pending.
+        storage_helper.sync_script_folder(sdir, user['uid'], sid)
+        shutil.rmtree(sdir, ignore_errors=True)
     return jsonify({'ok': True, 'sid': sid, 'status': script.get('status', initial_status),
                     'started': started, 'message': msg})
 
@@ -502,6 +506,10 @@ def _handle_zip(f, user, sid, sdir):
             f"Admin ZIP approved; start failed: {start_message}" if is_admin_upload else
             ("Uploaded! Admin approval ka wait karo." if initial_status == 'pending' else "Uploaded & approved!")
         )
+        if not started:
+            # Keep uploaded files in Firebase; no idle bot source folder on Render.
+            storage_helper.sync_script_folder(sdir, user['uid'], sid)
+            shutil.rmtree(sdir, ignore_errors=True)
         return jsonify({'ok': True, 'sid': sid, 'status': script.get('status', initial_status),
                         'started': started, 'message': msg})
     finally:
@@ -652,8 +660,10 @@ def admin_review_detail(sid):
     owner = db.get_user(s['user_id'])
     sdir = runner.get_script_dir(s['user_id'], sid)
 
-    # Read main file content
+    # Load the review copy from Firebase only when an admin opens the review.
     main_path = os.path.join(sdir, s['name'])
+    if not os.path.isfile(main_path):
+        storage_helper.download_script_folder(s['user_id'], sid, sdir)
     content = ''
     if os.path.exists(main_path):
         try:
