@@ -3,191 +3,185 @@
 
 {% block content %}
 
-<!-- ============ HERO BANNER ============ -->
+<!-- ============ HERO ============ -->
 <div class="hero">
     <div class="hero-inner">
-        <div class="hero-badge">⚡ POWERED BY CYBER KING</div>
-        <h1>
-            <span class="grad">A7 HOSTING</span><br>
-            TELEGRAM BOT HOSTING PLATFORM
-        </h1>
-        <p>Host your Telegram Bot 24/7 with high speed, security and zero downtime. Simple. Fast. Reliable.</p>
+        <div class="hero-badge"><svg class="ic ic-sm"><use href="#i-zap"/></svg>Telegram bot hosting platform</div>
+        <h1><span class="grad">A7 Hosting</span><br>Deploy and run your bots 24/7</h1>
+        <p>Upload a script or a ZIP project, add your environment variables and go live. Fast, secure and always online.</p>
 
         <div class="hero-bullets">
-            <span>🟢 24/7 Online</span>
-            <span>⚡ High Speed</span>
-            <span>🛡️ DDoS Protection</span>
-            <span>🎯 Easy to Use</span>
+            <span><svg class="ic"><use href="#i-check"/></svg>24/7 uptime</span>
+            <span><svg class="ic"><use href="#i-check"/></svg>Persistent storage</span>
+            <span><svg class="ic"><use href="#i-check"/></svg>Live logs</span>
+            <span><svg class="ic"><use href="#i-check"/></svg>Auto dependency install</span>
         </div>
 
-        <a href="{{ url_for('create_bot') }}" class="btn btn-primary">Get Started →</a>
+        <a href="{{ url_for('create_bot') }}" class="btn btn-primary"><svg class="ic ic-sm"><use href="#i-upload"/></svg>Deploy a bot</a>
     </div>
     <div class="hero-art">
-        <div class="hero-art-placeholder"></div>
+        <div class="hero-art-placeholder">
+            <div class="ln"><svg class="ic ic-sm"><use href="#i-upload"/></svg><b>Upload .py / .js / .zip</b><span>1</span></div>
+            <div class="ln"><svg class="ic ic-sm"><use href="#i-code"/></svg><b>Requirements installed</b><span>2</span></div>
+            <div class="ln"><svg class="ic ic-sm"><use href="#i-play"/></svg><b>Bot goes live</b><span>3</span></div>
+        </div>
     </div>
 </div>
 
-<!-- ============ STATS ROW ============ -->
+<!-- ============ STATS ============ -->
 <div class="stats-row">
     <div class="stat-card">
-        <div class="stat-icon purple">🤖</div>
+        <div class="stat-icon purple"><svg class="ic"><use href="#i-bot"/></svg></div>
         <div class="stat-body">
-            <div class="label">Total Bots</div>
+            <div class="label">Your bots</div>
             <div class="value">{{ scripts|length }}</div>
-            <div class="sub">Active Bots</div>
+            <div class="sub">{{ running_count }} running</div>
         </div>
     </div>
     <div class="stat-card">
-        <div class="stat-icon cyan">👥</div>
+        <div class="stat-icon cyan"><svg class="ic"><use href="#i-users"/></svg></div>
         <div class="stat-body">
-            <div class="label">Total Users</div>
+            <div class="label">Total users</div>
             <div class="value">{{ total_users }}</div>
-            <div class="sub">Online Users</div>
+            <div class="sub">Registered</div>
         </div>
     </div>
     <div class="stat-card">
-        <div class="stat-icon gold">⏱️</div>
+        <div class="stat-icon gold"><svg class="ic"><use href="#i-clock"/></svg></div>
         <div class="stat-body">
             <div class="label">Uptime</div>
             <div class="value">99.9%</div>
-            <div class="sub">Server Uptime</div>
+            <div class="sub">Target</div>
         </div>
     </div>
     <div class="stat-card">
-        <div class="stat-icon green">⚡</div>
+        <div class="stat-icon green"><svg class="ic"><use href="#i-zap"/></svg></div>
         <div class="stat-body">
-            <div class="label">Response Time</div>
-            <div class="value">&lt; 1s</div>
-            <div class="sub">Average Speed</div>
+            <div class="label">Deploy time</div>
+            <div class="value">&lt; 1 min</div>
+            <div class="sub">Typical</div>
         </div>
     </div>
 </div>
+
+{% if user.is_admin %}
+{% include '_storage_monitor.html' %}
+{% endif %}
 
 <!-- ============ MAIN + RIGHT RAIL ============ -->
 <div class="dash-grid">
     <div>
-        <!-- Feature Grid -->
         <div class="features">
             <div class="feature">
-                <div class="feature-icon" style="background:rgba(6,182,212,.15);color:var(--cyan-hi)">🚀</div>
-                <h4>Instant Deployment</h4>
-                <p>Deploy your bot in seconds with our powerful infrastructure.</p>
-                <a href="{{ url_for('create_bot') }}" class="link">Learn More →</a>
+                <div class="feature-icon"><svg class="ic"><use href="#i-upload"/></svg></div>
+                <h4>Instant deployment</h4>
+                <p>Upload a script or a full ZIP project. We find the entry file and install dependencies for you.</p>
+                <a href="{{ url_for('create_bot') }}" class="link">Deploy now →</a>
             </div>
             <div class="feature">
-                <div class="feature-icon" style="background:rgba(6,182,212,.15);color:var(--cyan-hi)">🛡️</div>
-                <h4>DDoS Protection</h4>
-                <p>Your bot stays safe with advanced security layers.</p>
-                <a href="{{ url_for('docs') }}" class="link">Learn More →</a>
+                <div class="feature-icon"><svg class="ic"><use href="#i-shield"/></svg></div>
+                <h4>Isolated &amp; reviewed</h4>
+                <p>Every bot runs in its own folder and goes through an approval step before it starts.</p>
+                <a href="{{ url_for('docs') }}" class="link">Read the docs →</a>
             </div>
             <div class="feature">
-                <div class="feature-icon" style="background:rgba(168,85,247,.15);color:var(--primary-hi)">⚡</div>
-                <h4>24/7 Uptime</h4>
-                <p>Always online, always active. No downtime, no worries.</p>
-                <a href="{{ url_for('docs') }}" class="link">Learn More →</a>
+                <div class="feature-icon"><svg class="ic"><use href="#i-db"/></svg></div>
+                <h4>Persistent storage</h4>
+                <p>Sessions, databases and files are synced to cloud storage so they survive restarts.</p>
+                <a href="{{ url_for('docs') }}" class="link">Learn more →</a>
             </div>
             <div class="feature">
-                <div class="feature-icon" style="background:rgba(168,85,247,.15);color:var(--primary-hi)">⚙️</div>
-                <h4>Easy Management</h4>
-                <p>Simple dashboard to manage your bots with ease.</p>
-                <a href="{{ url_for('my_bots') }}" class="link">Learn More →</a>
+                <div class="feature-icon"><svg class="ic"><use href="#i-log"/></svg></div>
+                <h4>Live logs</h4>
+                <p>Watch output in real time and start, stop or restart from one place.</p>
+                <a href="{{ url_for('my_bots') }}" class="link">Open my bots →</a>
             </div>
         </div>
 
-        <!-- Top Features Bar -->
         <div class="top-features">
-            <div class="title">⭐ Top Features</div>
-            <div class="tf-item">⚙️ <div><b>Multiple Bots</b><span>Host multiple bots at once</span></div></div>
-            <div class="tf-item">🌐 <div><b>Custom Domain</b><span>Use your own domain</span></div></div>
-            <div class="tf-item">📁 <div><b>File Storage</b><span>Secure &amp; fast storage</span></div></div>
-            <div class="tf-item">📊 <div><b>Logs &amp; Monitoring</b><span>Real-time bot logs</span></div></div>
-            <div class="tf-item">🔌 <div><b>API Access</b><span>Integrate with API</span></div></div>
+            <div class="title">Platform capabilities</div>
+            <div class="tf-item"><svg class="ic"><use href="#i-bot"/></svg><div><b>Multiple bots</b><span>Run several at once</span></div></div>
+            <div class="tf-item"><svg class="ic"><use href="#i-folder"/></svg><div><b>ZIP projects</b><span>Multi-file bots</span></div></div>
+            <div class="tf-item"><svg class="ic"><use href="#i-code"/></svg><div><b>Python &amp; Node.js</b><span>requirements / package.json</span></div></div>
+            <div class="tf-item"><svg class="ic"><use href="#i-lock"/></svg><div><b>Env variables</b><span>Keep tokens private</span></div></div>
         </div>
     </div>
 
-    <!-- Right Rail -->
+    <!-- Right rail -->
     <div class="right-rail">
-
         <div class="card">
             <div class="card-header">
-                <h3>🤖 Your Bots</h3>
-                <a href="{{ url_for('my_bots') }}" class="link">View All →</a>
+                <h3><svg class="ic"><use href="#i-bot"/></svg>Your bots</h3>
+                <a href="{{ url_for('my_bots') }}" class="link">View all →</a>
             </div>
 
             {% if scripts %}
             <div class="bot-list">
                 {% for s in scripts[:5] %}
                 <div class="bot-item">
-                    <div class="bot-avatar">
-                        {% if s.running %}🟢{% else %}⚪{% endif %}
-                        {% if user.plan == 'premium' %}<span class="crown">👑</span>{% endif %}
-                    </div>
+                    <div class="bot-avatar {{ 'on' if s.running else '' }}"><svg class="ic"><use href="#i-bot"/></svg></div>
                     <div class="bot-info">
                         <div class="name">{{ s.name }}</div>
                         <div class="status">
                             <span class="dot {{ 'on' if s.running else 'off' }}"></span>
-                            {{ 'Online' if s.running else 'Offline' }}
+                            {% if s.running %}Online{% elif s.status == 'pending' %}Pending approval{% elif s.status == 'rejected' %}Rejected{% else %}Offline{% endif %}
                         </div>
                     </div>
                     <div class="bot-actions">
+                        {% if s.running or s.status in ('approved', 'stopped', 'failed', 'running') %}
                         <button class="bot-play {% if s.running %}stop{% endif %}"
-                                onclick="toggleBot('{{ s.id }}', {{ 'true' if s.running else 'false' }})">
-                            {{ '⏹' if s.running else '▶' }}
+                                aria-label="{{ 'Stop' if s.running else 'Start' }}"
+                                onclick="toggleBot('{{ s.id }}', {{ 'true' if s.running else 'false' }}, this)">
+                            <svg class="ic"><use href="#{{ 'i-stop' if s.running else 'i-play' }}"/></svg>
                         </button>
+                        {% endif %}
                     </div>
                 </div>
                 {% endfor %}
             </div>
             {% else %}
             <p class="muted small" style="text-align:center; padding: 20px 0;">
-                No bots yet. <a href="{{ url_for('create_bot') }}">Create one →</a>
+                No bots yet. <a href="{{ url_for('create_bot') }}">Deploy one →</a>
             </p>
             {% endif %}
         </div>
 
-        <!-- Offer Card -->
         <div class="offer-card">
-            <h4>👑 Special Offer</h4>
-            <div class="big">Get 50% OFF</div>
-            <div class="sub">on Premium Plan</div>
-            <a href="{{ url_for('pricing') }}" class="btn btn-primary btn-sm" style="width:100%;">Upgrade Now →</a>
+            <h4>Premium plan</h4>
+            <div class="big">More bots, more power</div>
+            <div class="sub">Raise your bot limit and run without restrictions.</div>
+            <a href="{{ url_for('pricing') }}" class="btn btn-primary btn-sm" style="width:100%;">See plans</a>
         </div>
 
-        <!-- Support Card -->
         <div class="card">
             <div class="card-header">
-                <h3>✈️ Ready to Host Your Bot?</h3>
+                <h3><svg class="ic"><use href="#i-send"/></svg>Community &amp; support</h3>
             </div>
-            <p class="muted small" style="margin-bottom: 12px;">
-                Join our Telegram channel for updates &amp; support.
-            </p>
-            <a href="https://t.me/a7hosting" target="_blank" class="btn btn-cyan btn-sm" style="width:100%;">Join Channel →</a>
+            <p class="muted small" style="margin-bottom: 12px;">Join our Telegram channel for updates and help.</p>
+            <a href="https://t.me/a7hosting" target="_blank" rel="noopener" class="btn btn-cyan btn-sm" style="width:100%;">Join channel</a>
         </div>
-
     </div>
 </div>
 
 <footer style="margin-top: 32px; padding: 20px 0; border-top: 1px solid var(--border); display:flex; justify-content:space-between; font-size: 12px; color: var(--text-mute); flex-wrap:wrap; gap:12px;">
-    <div>A7 Hosting © 2025. All rights reserved.</div>
-    <div>Built with ❤️ by Cyber King</div>
-    <div>
-        <a href="#">Privacy Policy</a> · <a href="#">Terms of Service</a> · <a href="#">Contact Us</a>
-    </div>
+    <div>A7 Hosting © {{ now_year if now_year is defined else '2026' }}. All rights reserved.</div>
+    <div><a href="{{ url_for('docs') }}">Docs</a> · <a href="{{ url_for('support') }}">Support</a> · <a href="{{ url_for('pricing') }}">Pricing</a></div>
 </footer>
 
 <script>
-async function toggleBot(sid, isRunning) {
+async function toggleBot(sid, isRunning, btn) {
+    if (btn) btn.disabled = true;
     const url = isRunning ? `/api/script/${sid}/stop` : `/api/script/${sid}/start`;
-    const res = await fetch(url, { method: 'POST' });
-    const raw = await res.text();
-    let data;
-    try { data = JSON.parse(raw); }
-    catch (_) { alert('Server returned HTML instead of JSON (HTTP '+res.status+'). Check Render logs.'); return; }
-    if (data.ok) {
-        location.reload();
-    } else {
+    try {
+        const res = await fetch(url, { method: 'POST', headers: {'X-Requested-With': 'XMLHttpRequest'} });
+        const raw = await res.text();
+        let data;
+        try { data = JSON.parse(raw); }
+        catch (_) { throw new Error('Server returned HTML instead of JSON (HTTP ' + res.status + ').'); }
+        if (data.ok) { location.reload(); return; }
         alert(data.message || data.error || 'Action failed');
-    }
+    } catch (e) { alert('Error: ' + e.message); }
+    if (btn) btn.disabled = false;
 }
 </script>
 

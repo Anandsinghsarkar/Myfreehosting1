@@ -1,0 +1,148 @@
+{# Live service + storage monitor. Admin only (uses /api/admin/storage). Include once per page. #}
+<section class="monitor" id="serviceMonitor">
+  <div class="monitor-head">
+    <h3><svg class="ic"><use href="#i-activity"/></svg>Service &amp; Storage Monitor</h3>
+    <div class="row">
+      <span class="live-pill wait" id="liveState"><span class="pulse"></span><span id="liveText">CONNECTING</span></span>
+      <button class="btn btn-ghost btn-xs" type="button" id="monRefresh"><svg class="ic ic-sm"><use href="#i-refresh"/></svg>Refresh</button>
+    </div>
+  </div>
+
+  <div class="monitor-grid">
+    <!-- Application storage (Render) -->
+    <div class="store-card">
+      <div class="store-top">
+        <div class="ring">
+          <svg viewBox="0 0 100 100"><circle class="trk" cx="50" cy="50" r="42"/><circle class="bar" id="rBar" cx="50" cy="50" r="42"/></svg>
+          <div class="pct"><b id="rPct">—</b><span>USED</span></div>
+        </div>
+        <div class="store-meta">
+          <div class="t"><svg class="ic"><use href="#i-server"/></svg>Application Storage</div>
+          <div class="s">Render runtime files (active bots)</div>
+          <div class="big"><span id="rUsedBig">—</span> <small>of <span id="rTotalBig">—</span></small></div>
+        </div>
+      </div>
+      <div class="store-bar"><div id="rLine"></div></div>
+      <div class="store-stats">
+        <div><div class="k">Used</div><div class="v" id="rUsed">—</div></div>
+        <div><div class="k">Free</div><div class="v" id="rFree">—</div></div>
+        <div><div class="k">Capacity</div><div class="v" id="rTotal">—</div></div>
+      </div>
+    </div>
+
+    <!-- Cloud storage (DBByte) -->
+    <div class="store-card">
+      <div class="store-top">
+        <div class="ring">
+          <svg viewBox="0 0 100 100"><circle class="trk" cx="50" cy="50" r="42"/><circle class="bar" id="cBar" cx="50" cy="50" r="42"/></svg>
+          <div class="pct"><b id="cPct">—</b><span>USED</span></div>
+        </div>
+        <div class="store-meta">
+          <div class="t"><svg class="ic"><use href="#i-cloud"/></svg>Cloud Storage</div>
+          <div class="s" id="cBucket">DBByte bucket</div>
+          <div class="big"><span id="cUsedBig">—</span> <small>of <span id="cTotalBig">—</span></small></div>
+        </div>
+      </div>
+      <div class="store-bar"><div id="cLine"></div></div>
+      <div class="store-stats">
+        <div><div class="k">Used</div><div class="v" id="cUsed">—</div></div>
+        <div><div class="k">Free</div><div class="v" id="cFree">—</div></div>
+        <div><div class="k">Objects</div><div class="v" id="cFiles">—</div></div>
+      </div>
+      <div class="store-err" id="cErr" hidden></div>
+    </div>
+  </div>
+
+  <div class="monitor-foot">
+    <span class="ping"><span class="dot off" id="pingDot"></span><span id="pingText">Latency —</span></span>
+    <span id="monUpdated">Waiting for first reading…</span>
+  </div>
+</section>
+
+<script>
+(function () {
+  const STORAGE_URL = "{{ url_for('api_admin_storage') }}";
+  const HEALTH_URL = "{{ url_for('health') }}";
+  const POLL_MS = 5000;
+  const C = 2 * Math.PI * 42;
+  const $ = (id) => document.getElementById(id);
+  let timer = null, busy = false, fails = 0;
+
+  function fmt(n) {
+    if (n === null || n === undefined || isNaN(n)) return '—';
+    const u = ['B', 'KB', 'MB', 'GB', 'TB']; let v = Number(n), i = 0;
+    while (v >= 1024 && i < u.length - 1) { v /= 1024; i++; }
+    return v.toFixed(i === 0 ? 0 : (v >= 100 ? 0 : v >= 10 ? 1 : 2)) + ' ' + u[i];
+  }
+  function level(p) { return p >= 90 ? 'crit' : p >= 70 ? 'warn' : ''; }
+  function setRing(barId, pctId, p, ok) {
+    const bar = $(barId), pct = Math.max(0, Math.min(100, Number(p) || 0));
+    bar.setAttribute('class', 'bar ' + level(pct));
+    bar.style.strokeDasharray = ok ? ((pct / 100) * C).toFixed(1) + ' ' + C.toFixed(1) : '0 ' + C.toFixed(1);
+    $(pctId).textContent = ok ? (pct < 10 ? pct.toFixed(1) : Math.round(pct)) + '%' : '—';
+  }
+  function setLine(id, p, ok) {
+    const el = $(id); el.className = level(p);
+    el.style.width = ok ? Math.max(p > 0 ? 1.5 : 0, Math.min(100, p)) + '%' : '0%';
+  }
+  function pill(state, text) {
+    const el = $('liveState'); el.className = 'live-pill ' + state; $('liveText').textContent = text;
+  }
+
+  async function ping() {
+    const t0 = performance.now();
+    try {
+      const r = await fetch(HEALTH_URL + '?t=' + Date.now(), { cache: 'no-store' });
+      const d = await r.json();
+      const ms = Math.round(performance.now() - t0);
+      $('pingDot').className = 'dot ' + (r.ok && d.status === 'ok' ? 'on' : 'off');
+      $('pingText').textContent = 'Latency ' + ms + ' ms';
+    } catch (e) {
+      $('pingDot').className = 'dot off'; $('pingText').textContent = 'Service unreachable';
+    }
+  }
+
+  async function refresh() {
+    if (busy) return; busy = true;
+    try {
+      const r = await fetch(STORAGE_URL, { cache: 'no-store', credentials: 'same-origin' });
+      const d = await r.json();
+      if (!r.ok || !d.ok) throw new Error(d.error || ('HTTP ' + r.status));
+
+      const s = d.render || {};
+      const rp = Number(s.used_percent || 0);
+      setRing('rBar', 'rPct', rp, true); setLine('rLine', rp, true);
+      $('rUsed').textContent = $('rUsedBig').textContent = fmt(s.used_bytes);
+      $('rFree').textContent = fmt(s.free_bytes);
+      $('rTotal').textContent = $('rTotalBig').textContent = fmt(s.total_bytes);
+
+      const f = d.dbbyte || {};
+      const cloudOk = !!f.available && !f.error;
+      const cp = Number(f.used_percent || 0);
+      setRing('cBar', 'cPct', cp, cloudOk); setLine('cLine', cp, cloudOk);
+      $('cUsed').textContent = $('cUsedBig').textContent = cloudOk ? fmt(f.used_bytes) : '—';
+      $('cFree').textContent = cloudOk ? fmt(f.free_bytes) : '—';
+      $('cTotalBig').textContent = fmt(f.quota_bytes);
+      $('cFiles').textContent = cloudOk ? Number(f.file_count || 0).toLocaleString() : '—';
+      $('cBucket').textContent = 'DBByte · ' + (f.bucket || 'not configured');
+      const err = $('cErr');
+      if (!cloudOk) { err.hidden = false; err.textContent = f.error || 'Cloud storage unavailable.'; } else { err.hidden = true; }
+
+      fails = 0;
+      pill(cloudOk ? '' : 'bad', cloudOk ? 'LIVE' : 'CLOUD ERROR');
+      $('monUpdated').textContent = 'Updated ' + new Date().toLocaleTimeString() + ' · auto-refresh 5s';
+      ping();
+    } catch (e) {
+      fails++;
+      pill('bad', 'OFFLINE');
+      $('monUpdated').textContent = 'Check failed: ' + e.message + (fails > 1 ? ' (retrying)' : '');
+    } finally { busy = false; }
+  }
+
+  function start() { if (!timer) { refresh(); timer = setInterval(refresh, POLL_MS); } }
+  function stop() { clearInterval(timer); timer = null; }
+  document.addEventListener('visibilitychange', () => document.hidden ? stop() : start());
+  $('monRefresh').addEventListener('click', refresh);
+  start();
+})();
+</script>
