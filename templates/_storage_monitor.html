@@ -30,7 +30,7 @@
       </div>
     </div>
 
-    <!-- Cloud storage (DBByte) -->
+    <!-- Cloud storage (Backblaze B2) -->
     <div class="store-card">
       <div class="store-top">
         <div class="ring">
@@ -39,7 +39,7 @@
         </div>
         <div class="store-meta">
           <div class="t"><svg class="ic"><use href="#i-cloud"/></svg>Cloud Storage</div>
-          <div class="s" id="cBucket">DBByte bucket</div>
+          <div class="s" id="cBucket">Backblaze B2 bucket</div>
           <div class="big"><span id="cUsedBig">—</span> <small>of <span id="cTotalBig">—</span></small></div>
         </div>
       </div>
@@ -116,7 +116,7 @@
       $('rFree').textContent = fmt(s.free_bytes);
       $('rTotal').textContent = $('rTotalBig').textContent = fmt(s.total_bytes);
 
-      const f = d.dbbyte || {};
+      const f = d.backblaze || {};
       const cloudOk = !!f.available && !f.error;
       const cp = Number(f.used_percent || 0);
       setRing('cBar', 'cPct', cp, cloudOk); setLine('cLine', cp, cloudOk);
@@ -124,7 +124,7 @@
       $('cFree').textContent = cloudOk ? fmt(f.free_bytes) : '—';
       $('cTotalBig').textContent = fmt(f.quota_bytes);
       $('cFiles').textContent = cloudOk ? Number(f.file_count || 0).toLocaleString() : '—';
-      $('cBucket').textContent = 'DBByte · ' + (f.bucket || 'not configured');
+      $('cBucket').textContent = 'Backblaze B2 · ' + (f.bucket || 'not configured');
       const err = $('cErr');
       if (!cloudOk) { err.hidden = false; err.textContent = f.error || 'Cloud storage unavailable.'; } else { err.hidden = true; }
 
