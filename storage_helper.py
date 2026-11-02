@@ -134,11 +134,18 @@ def upload_qr_image(local_path, filename):
 
 
 def get_storage_usage():
-    """Measure actual bytes stored under scripts/ in the configured Firebase bucket."""
+    """Measure actual bytes stored under scripts/ and return actionable diagnostics."""
+    from firebase_config import get_storage_diagnostics
     result = {'configured': False, 'used_bytes': 0, 'file_count': 0}
     try:
+        diagnostics = get_storage_diagnostics()
+        result.update(diagnostics)
         bucket = get_bucket()
         if not bucket:
+            result['error'] = (
+                "No bucket found. Check Firebase Console > Storage > Files, "
+                "service-account project, and FIREBASE_STORAGE_BUCKET."
+            )
             return result
         result['configured'] = True
         total = 0
@@ -149,5 +156,5 @@ def get_storage_usage():
         result['used_bytes'] = total
         result['file_count'] = count
     except Exception as exc:
-        result['error'] = str(exc)
+        result['error'] = f"{type(exc).__name__}: {exc}"
     return result
