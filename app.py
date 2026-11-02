@@ -225,7 +225,7 @@ def api_admin_storage():
                 'quota_mb': render_quota_mb,
                 'scope': 'Application upload/temp files only; configured app quota, not provider-wide disk telemetry'
             },
-            'dbbyte': cloud_storage
+            'backblaze': cloud_storage
         })
     except Exception as exc:
         app.logger.exception("Storage monitor failed")
@@ -385,7 +385,7 @@ def _queue_bot_deploy(sid, user_id, sdir, file_path=None, file_type=None, env_va
     """
     Keep upload requests short: the source is written to Render first, then
     approved bots are started in the background, and only afterwards copied
-    to DBByte. Pending bots are backed up after the local upload so they
+    to Backblaze B2. Pending bots are backed up after the local upload so they
     survive a Render restart while waiting for approval.
     """
     def _work():
@@ -402,7 +402,7 @@ def _queue_bot_deploy(sid, user_id, sdir, file_path=None, file_type=None, env_va
                 })
                 print(f"[DEPLOY] Bot {sid}: {'started' if ok else 'start failed'}: {message}", flush=True)
 
-            # Do not make the browser upload request wait for DBByte/network I/O.
+            # Do not make the browser upload request wait for Backblaze B2/network I/O.
             if os.path.isdir(sdir):
                 synced = storage_helper.sync_script_folder(sdir, user_id, sid)
                 if synced:
@@ -410,9 +410,9 @@ def _queue_bot_deploy(sid, user_id, sdir, file_path=None, file_type=None, env_va
                         'storage_path': f"scripts/{user_id}/{sid}/",
                         'storage_synced_at': datetime.utcnow().isoformat(),
                     })
-                    print(f"[DBBYTE] Initial backup completed for bot {sid}", flush=True)
+                    print(f"[BACKBLAZE] Initial backup completed for bot {sid}", flush=True)
                 else:
-                    print(f"[DBBYTE] Initial backup FAILED for bot {sid}: {storage_helper.LAST_ERROR}", flush=True)
+                    print(f"[BACKBLAZE] Initial backup FAILED for bot {sid}: {storage_helper.LAST_ERROR}", flush=True)
         except Exception as exc:
             print(f"[DEPLOY] Background deploy/backup failed for {sid}: {type(exc).__name__}: {exc}", flush=True)
 
@@ -457,14 +457,14 @@ def create_code():
     db.add_script(sid, user['uid'], name, 'py', f"scripts/{user['uid']}/{sid}/", status=status)
     db.update_script(sid, {'env_vars': env_vars})
     # Source is already on the Render filesystem. Start approved code away
-    # from the HTTP request, then back it up to DBByte in the same worker.
+    # from the HTTP request, then back it up to Backblaze B2 in the same worker.
     _queue_bot_deploy(
         sid, user['uid'], sdir,
         file_path=os.path.join(sdir, name) if status == 'approved' else None,
         file_type='py',
         env_vars=env_vars,
     )
-    message = 'Upload saved on server. Deployment and DBByte backup queued.' if status == 'approved' else 'Uploaded on server. Admin approval pending; DBByte backup queued.'
+    message = 'Upload saved on server. Deployment and Backblaze B2 backup queued.' if status == 'approved' else 'Uploaded on server. Admin approval pending; Backblaze B2 backup queued.'
     return jsonify({'ok': True, 'sid': sid, 'status': status, 'started': False, 'queued': True, 'message': message})
 
 
@@ -493,7 +493,7 @@ def edit_bot(sid):
         sdir = runner.get_script_dir(script['user_id'], sid)
         if not os.path.isfile(os.path.join(sdir, rel)):
             if not storage_helper.download_script_folder(script['user_id'], sid, sdir):
-                return jsonify({'ok': False, 'error': 'Could not restore source from DBByte.'}), 502
+                return jsonify({'ok': False, 'error': 'Could not restore source from Backblaze B2.'}), 502
         with open(os.path.join(sdir, rel), 'w', encoding='utf-8') as out:
             out.write(source)
         env_vars = data.get('env_vars') or {}
@@ -502,14 +502,14 @@ def edit_bot(sid):
         env_vars = {str(k): str(v) for k, v in env_vars.items() if re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]{0,127}', str(k))}
         db.update_script(sid, {'env_vars': env_vars, 'updated_at': datetime.utcnow().isoformat()})
         # Keep the edited copy on Render. If it was running, restart it in the
-        # background; then back up the updated source/session files to DBByte.
+        # background; then back up the updated source/session files to Backblaze B2.
         _queue_bot_deploy(
             sid, script['user_id'], sdir,
             file_path=os.path.join(sdir, rel) if was_running else None,
             file_type='py',
             env_vars=env_vars,
         )
-        message = 'Changes saved on Render. Restart and DBByte backup queued.' if was_running else 'Changes saved on Render. DBByte backup queued; start the bot when ready.'
+        message = 'Changes saved on Render. Restart and Backblaze B2 backup queued.' if was_running else 'Changes saved on Render. Backblaze B2 backup queued; start the bot when ready.'
         return jsonify({'ok': True, 'queued': True, 'message': message})
     sdir = runner.get_script_dir(script['user_id'], sid)
     if not os.path.isfile(os.path.join(sdir, script['name'])):
@@ -622,7 +622,7 @@ def _handle_single(f, user, sid, sdir, filename, ext, env_vars):
     with open(local_path, 'wb') as out:
         out.write(content)
 
-    # Save to the Render runtime first. DBByte is the persistent backup,
+    # Save to the Render runtime first. Backblaze B2 is the persistent backup,
     # not a prerequisite for accepting the upload or launching the bot.
     settings = db.get_settings()
     is_admin_upload = bool(user.get('is_admin'))
@@ -644,11 +644,11 @@ def _handle_single(f, user, sid, sdir, filename, ext, env_vars):
         sid, user, filename, ext[1:], script.get('status', initial_status), local_path
     )
     msg = (
-        "Upload received on Render. Bot start and DBByte backup are running in background."
+        "Upload received on Render. Bot start and Backblaze B2 backup are running in background."
         if should_start else
-        ("Uploaded on Render. Admin approval pending; DBByte backup queued."
+        ("Uploaded on Render. Admin approval pending; Backblaze B2 backup queued."
          if initial_status == 'pending' else
-         "Uploaded on Render and approved. Start it from My Bots; DBByte backup queued.")
+         "Uploaded on Render and approved. Start it from My Bots; Backblaze B2 backup queued.")
     )
     return jsonify({'ok': True, 'sid': sid, 'status': script.get('status', initial_status),
                     'started': False, 'queued': True, 'message': msg})
@@ -707,10 +707,10 @@ def api_stop(sid):
     try:
         # Also sync files if the bot had already exited before Stop was clicked.
         if os.path.isdir(sdir) and not storage_helper.sync_script_folder(sdir, s['user_id'], sid, prune=True):
-            return jsonify({'ok': False, 'error': 'Bot stopped, but DBByte sync failed. Temporary files were kept for safety.'}), 502
+            return jsonify({'ok': False, 'error': 'Bot stopped, but Backblaze B2 sync failed. Temporary files were kept for safety.'}), 502
         shutil.rmtree(sdir, ignore_errors=False) if os.path.isdir(sdir) else None
         db.update_script(sid, {'running': False, 'status': 'stopped'})
-        return jsonify({'ok': True, 'message': 'Stopped. Runtime files saved to DBByte and cleared from Render.'})
+        return jsonify({'ok': True, 'message': 'Stopped. Runtime files saved to Backblaze B2 and cleared from Render.'})
     except Exception as exc:
         app.logger.exception("Stop cleanup failed for %s", sid)
         return jsonify({'ok': False, 'error': f'Bot stopped, cleanup failed: {exc}'}), 500
@@ -760,16 +760,16 @@ def api_delete(sid):
     try:
         # Stop first. If the process is already gone, continue with orphan cleanup.
         runner.stop_script(sid)
-        # Always inspect/delete the DBByte prefix, even when the Firestore
+        # Always inspect/delete the Backblaze B2 prefix, even when the Firestore
         # storage_path field is blank or stale (older uploads often had this).
         if not storage_helper.delete_script_folder(s['user_id'], sid):
-            return jsonify({'ok': False, 'error': 'DBByte files could not be verified as deleted. Bot record was kept; retry after checking DBByte API key and permissions.'}), 502
+            return jsonify({'ok': False, 'error': 'Backblaze B2 files could not be verified as deleted. Bot record was kept; retry after checking Backblaze B2 API key and permissions.'}), 502
         if os.path.isdir(sdir):
             shutil.rmtree(sdir)
         if os.path.exists(sdir):
             return jsonify({'ok': False, 'error': 'Temporary Render folder still exists; Firestore record was kept.'}), 500
         db.delete_script(sid)
-        return jsonify({'ok': True, 'message': 'Bot, DBByte files and Render temporary files deleted.'})
+        return jsonify({'ok': True, 'message': 'Bot, Backblaze B2 files and Render temporary files deleted.'})
     except Exception as exc:
         app.logger.exception("Bot delete failed for %s", sid)
         return jsonify({'ok': False, 'error': f'Delete failed: {type(exc).__name__}: {exc}'}), 500
@@ -800,7 +800,7 @@ def admin_review_detail(sid):
     owner = db.get_user(s['user_id'])
     sdir = runner.get_script_dir(s['user_id'], sid)
 
-    # Load the review copy from DBByte only when an admin opens the review.
+    # Load the review copy from Backblaze B2 only when an admin opens the review.
     main_path = os.path.join(sdir, s['name'])
     if not os.path.isfile(main_path):
         storage_helper.download_script_folder(s['user_id'], sid, sdir)
@@ -984,7 +984,7 @@ def admin_delete_user(uid):
     for script in db.list_scripts(uid):
         runner.stop_script(script['id'])
         if not storage_helper.delete_script_folder(uid, script['id']):
-            flash(f"DBByte storage delete failed for {script.get('name', script['id'])}; user not deleted. Check Storage permissions and retry.", "error")
+            flash(f"Backblaze B2 storage delete failed for {script.get('name', script['id'])}; user not deleted. Check Storage permissions and retry.", "error")
             return redirect(url_for('admin_dashboard'))
         shutil.rmtree(os.path.join(UPLOAD_DIR, str(uid), str(script['id'])), ignore_errors=True)
     shutil.rmtree(os.path.join(UPLOAD_DIR, str(uid)), ignore_errors=True)
@@ -1283,7 +1283,7 @@ def payment_history():
 
 
 def restore_running_scripts():
-    """Restore bots marked running from persistent DBByte storage after Render restarts."""
+    """Restore bots marked running from persistent Backblaze B2 storage after Render restarts."""
     if os.environ.get('RESTORE_BOTS_ON_STARTUP', 'true').lower() != 'true':
         print('[RESTORE] Disabled by RESTORE_BOTS_ON_STARTUP', flush=True)
         return
