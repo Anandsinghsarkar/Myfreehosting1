@@ -355,6 +355,32 @@ def create_bot():
 
 
 
+def _queue_upload_notifications(sid, user, filename, file_type, status, local_path):
+    """Send optional Telegram review notices without holding the upload request open."""
+    def _notify():
+        details = {
+            'User': user.get('name', user.get('email', user['uid'])),
+            'Email': user.get('email', ''),
+            'File': filename,
+            'Type': file_type,
+            'Status': status,
+            'Script ID': sid,
+        }
+        try:
+            notify_telegram_event('New file upload', details)
+        except Exception as exc:
+            print(f'[TELEGRAM] Upload event notification failed: {exc}', flush=True)
+        try:
+            import telegram_admin
+            telegram_admin.send_upload_notice(
+                sys.modules[__name__], sid, '📥 NEW FILE UPLOAD', details, [local_path]
+            )
+        except Exception as exc:
+            print(f'[TELEGRAM] Upload review notice failed: {exc}', flush=True)
+
+    threading.Thread(target=_notify, name=f"upload-notice-{sid}", daemon=True).start()
+
+
 def _queue_bot_deploy(sid, user_id, sdir, file_path=None, file_type=None, env_vars=None):
     """
     Keep upload requests short: the source is written to Render first, then
@@ -613,14 +639,10 @@ def _handle_single(f, user, sid, sdir, filename, ext, env_vars):
         file_type=ext[1:],
         env_vars=env_vars,
     )
-    started = False
     script = db.get_script(sid) or {}
-    notify_telegram_event('New file upload', {'User': user.get('name', user.get('email', user['uid'])), 'Email': user.get('email', ''), 'File': filename, 'Type': ext[1:], 'Status': script.get('status', initial_status), 'Started': started, 'Script ID': sid})
-    try:
-        import telegram_admin
-        telegram_admin.send_upload_notice(sys.modules[__name__], sid, '📥 NEW FILE UPLOAD', {'User': user.get('name', user.get('email', user['uid'])), 'Email': user.get('email', ''), 'File': filename, 'Status': script.get('status', initial_status), 'Script ID': sid}, [local_path])
-    except Exception as exc:
-        print(f'[TELEGRAM] Upload review notice failed: {exc}', flush=True)
+    _queue_upload_notifications(
+        sid, user, filename, ext[1:], script.get('status', initial_status), local_path
+    )
     msg = (
         "Upload received on Render. Bot start and DBByte backup are running in background."
         if should_start else
