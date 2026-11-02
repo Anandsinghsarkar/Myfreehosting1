@@ -561,6 +561,8 @@ def _handle_zip(f, user, sid, sdir):
     tmp = tempfile.mkdtemp(prefix='zip_')
     try:
         zpath = os.path.join(tmp, 'archive.zip')
+        extract_dir = os.path.join(tmp, 'extracted')
+        os.makedirs(extract_dir, exist_ok=True)
         f.save(zpath)
         with zipfile.ZipFile(zpath) as z:
             members = z.infolist()
@@ -568,20 +570,20 @@ def _handle_zip(f, user, sid, sdir):
                 return jsonify({'ok': False, 'error': 'ZIP contains too many files (max 500).'}), 400
             if sum(int(m.file_size or 0) for m in members) > 100 * 1024 * 1024:
                 return jsonify({'ok': False, 'error': 'Expanded ZIP size exceeds 100 MB.'}), 400
-            root_real = os.path.realpath(tmp)
+            root_real = os.path.realpath(extract_dir)
             for m in members:
-                target = os.path.realpath(os.path.join(tmp, m.filename))
+                target = os.path.realpath(os.path.join(extract_dir, m.filename))
                 if os.path.commonpath([root_real, target]) != root_real:
                     return jsonify({'ok': False, 'error': 'Unsafe ZIP path.'}), 400
                 unix_mode = (m.external_attr >> 16) & 0o170000
                 if unix_mode == 0o120000:
                     return jsonify({'ok': False, 'error': 'ZIP symlinks are not allowed.'}), 400
-            z.extractall(tmp)
+            z.extractall(extract_dir)
 
-        items = os.listdir(tmp)
-        if len(items) == 1 and os.path.isdir(os.path.join(tmp, items[0])):
-            tmp = os.path.join(tmp, items[0])
-            items = os.listdir(tmp)
+        items = os.listdir(extract_dir)
+        if len(items) == 1 and os.path.isdir(os.path.join(extract_dir, items[0])):
+            extract_dir = os.path.join(extract_dir, items[0])
+            items = os.listdir(extract_dir)
 
         py = [x for x in items if x.endswith('.py')]
         js = [x for x in items if x.endswith('.js')]
@@ -599,8 +601,8 @@ def _handle_zip(f, user, sid, sdir):
         if not main:
             return jsonify({'ok': False, 'error': 'No .py/.js found'}), 400
 
-        for item in os.listdir(tmp):
-            src = os.path.join(tmp, item)
+        for item in os.listdir(extract_dir):
+            src = os.path.join(extract_dir, item)
             dst = os.path.join(sdir, item)
             if os.path.isdir(dst): shutil.rmtree(dst)
             elif os.path.exists(dst): os.remove(dst)
