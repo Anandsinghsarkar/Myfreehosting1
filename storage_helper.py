@@ -69,28 +69,52 @@ def download_script_folder(user_id, script_id, dest_dir):
 
 
 def delete_script_folder(user_id, script_id):
-    """Delete every mirrored object for a script immediately; report failures."""
+    """Delete and verify every object below this bot's Firebase Storage prefix."""
     try:
         bucket = get_bucket()
         if not bucket:
-            print("⚠️ Firebase Storage is not configured; no cloud delete was attempted.")
+            print("[FIREBASE] Storage bucket unavailable; refusing to report deletion success.")
             return False
         prefix = f"scripts/{user_id}/{script_id}/"
-        failed = []
-        for blob in bucket.list_blobs(prefix=prefix):
-            try:
-                blob.delete()
-            except Exception as exc:
-                failed.append(blob.name)
-                print(f"❌ Storage delete failed for {blob.name}: {exc}")
-        if failed:
-            print(f"❌ Could not delete {len(failed)} cloud object(s) for {script_id}")
+        blobs = list(bucket.list_blobs(prefix=prefix))
+        for blob in blobs:
+            blob.delete()
+        # Verify the prefix is empty before the Firestore bot record is removed.
+        remaining = list(bucket.list_blobs(prefix=prefix))
+        if remaining:
+            print(f"[FIREBASE] Delete verification failed for {prefix}: {len(remaining)} object(s) remain.")
             return False
-        print(f"🗑️ Firebase Storage folder deleted: {prefix}")
+        print(f"[FIREBASE] Deleted {len(blobs)} object(s) under {prefix}")
         return True
-    except Exception as e:
-        print(f"❌ Storage delete failed: {e}")
+    except Exception as exc:
+        print(f"[FIREBASE] Bot folder deletion failed for {user_id}/{script_id}: {type(exc).__name__}: {exc}")
         return False
+
+
+def sync_script_folder(local_dir, user_id, script_id):
+    """Mirror all current runtime files to Firebase and report whether all files synced."""
+    expected = 0
+    for _, _, filenames in os.walk(local_dir):
+        expected += len(filenames)
+    if expected == 0:
+        return True
+    uploaded = upload_script_folder(local_dir, user_id, script_id)
+    return len(uploaded) == expected
+
+
+def read_script_file(user_id, script_id, filename):
+    """Read a saved file directly from Firebase without creating a Render copy."""
+    try:
+        bucket = get_bucket()
+        if not bucket:
+            return None
+        blob = bucket.blob(f"scripts/{user_id}/{script_id}/{filename}")
+        if not blob.exists():
+            return None
+        return blob.download_as_bytes()
+    except Exception as exc:
+        print(f"[FIREBASE] Remote read failed for {script_id}/{filename}: {exc}")
+        return None
 
 
 def upload_qr_image(local_path, filename):
