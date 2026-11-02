@@ -13,6 +13,7 @@ import db
 import runner
 import storage_helper
 import terminal
+import zip_utils
 from firebase_config import init_firebase
 from firebase_admin import auth as fb_auth
 
@@ -216,6 +217,7 @@ def api_admin_storage():
         cloud_storage = storage_helper.get_storage_usage()
         return jsonify({
             'ok': True,
+            'server_time': datetime.utcnow().isoformat(),
             'render': {
                 'used_bytes': render_used,
                 'total_bytes': render_quota_bytes,
@@ -383,11 +385,12 @@ def create_code():
             out.write(requirements)
     env_vars = data.get('env_vars') or {}
     if not isinstance(env_vars, dict):
+        shutil.rmtree(sdir, ignore_errors=True)
         return jsonify({'ok': False, 'error': 'Environment variables must be key/value JSON'}), 400
     env_vars = {str(k): str(v) for k, v in env_vars.items() if re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]{0,127}', str(k))}
     if not storage_helper.sync_script_folder(sdir, user['uid'], sid):
         shutil.rmtree(sdir, ignore_errors=True)
-        return jsonify({'ok': False, 'error': 'DBByte upload failed; check DBByte credentials.'}), 502
+        return jsonify({'ok': False, 'error': 'DBByte upload failed: ' + (storage_helper.LAST_ERROR or 'check DBByte credentials.')}), 502
     settings = db.get_settings()
     status = 'approved' if user.get('is_admin') or settings.get('auto_approve') else 'pending'
     db.add_script(sid, user['uid'], name, 'py', f"scripts/{user['uid']}/{sid}/", status=status)
@@ -413,7 +416,7 @@ def edit_bot(sid):
             return jsonify({'ok': False, 'error': 'Bot must be approved before editing.'}), 400
         data = request.get_json(silent=True) or {}
         rel = script.get('name', '')
-        if not rel.endswith('.py') or '/' in rel or '\\\\' in rel:
+        if not rel.endswith('.py') or '/' in rel or '\\' in rel:
             return jsonify({'ok': False, 'error': 'Only a main Python file can be edited here.'}), 400
         source = str(data.get('code', ''))
         if not source.strip() or len(source.encode('utf-8')) > MAX_FILE_SIZE:
@@ -461,14 +464,23 @@ def upload():
     user = current_user()
     f = request.files.get('file')
     if not f or not f.filename:
-        return jsonify({'ok': False, 'error': 'No file'}), 400
+        return jsonify({'ok': False, 'error': 'No file selected.'}), 400
     if db.count_scripts(user['uid']) >= user.get('file_limit', 2):
-        return jsonify({'ok': False, 'error': 'File limit reached'}), 400
+        return jsonify({'ok': False, 'error': 'File limit reached. Delete a bot or upgrade your plan.'}), 400
 
-    filename = secure_filename(f.filename)
-    ext = os.path.splitext(filename)[1].lower()
+    # Take the extension from the ORIGINAL name: secure_filename() strips
+    # non-ASCII characters and can turn "bot.zip" into just "zip".
+    original = f.filename
+    ext = os.path.splitext(original)[1].lower()
     if ext not in ALLOWED_EXT:
-        return jsonify({'ok': False, 'error': 'Only .py/.js/.zip'}), 400
+        return jsonify({'ok': False, 'error': 'Only .py, .js or .zip files are allowed.'}), 400
+    stem = secure_filename(os.path.splitext(original)[0]) or 'bot'
+    filename = stem + ext
+
+    try:
+        env_vars = _upload_env_vars()
+    except ValueError as exc:
+        return jsonify({'ok': False, 'error': str(exc)}), 400
 
     sid = str(uuid.uuid4())[:12]
     sdir = runner.get_script_dir(user['uid'], sid)
@@ -494,9 +506,13 @@ def upload():
         except Exception:
             pass
 
-    if ext == '.zip':
-        return _handle_zip(f, user, sid, sdir)
-    return _handle_single(f, user, sid, sdir, filename, ext)
+    try:
+        if ext == '.zip':
+            return _handle_zip(f, original, user, sid, sdir, env_vars)
+        return _handle_single(f, user, sid, sdir, filename, ext, env_vars)
+    except Exception:
+        shutil.rmtree(sdir, ignore_errors=True)
+        raise
 
 
 def _start_uploaded_script(sid, user, sdir, filename, file_type):
@@ -526,10 +542,17 @@ def _upload_env_vars():
     except Exception as exc:
         raise ValueError(f'Invalid environment variables JSON: {exc}')
 
-def _handle_single(f, user, sid, sdir, filename, ext):
+
+def _upload_failure(sdir, message, code=400):
+    """Remove the half-created bot folder and return a JSON error."""
+    shutil.rmtree(sdir, ignore_errors=True)
+    return jsonify({'ok': False, 'error': message}), code
+
+
+def _handle_single(f, user, sid, sdir, filename, ext, env_vars):
     content = f.read()
     if len(content) > MAX_FILE_SIZE:
-        return jsonify({'ok': False, 'error': 'Too large'}), 400
+        return _upload_failure(sdir, 'File too large (20 MB maximum).')
 
     local_path = os.path.join(sdir, filename)
     with open(local_path, 'wb') as out:
@@ -539,17 +562,13 @@ def _handle_single(f, user, sid, sdir, filename, ext):
     synced = storage_helper.sync_script_folder(sdir, user['uid'], sid)
     storage_path = f"scripts/{user['uid']}/{sid}/" if synced else ''
     if not synced:
-        shutil.rmtree(sdir, ignore_errors=True)
-        return jsonify({'ok': False, 'error': 'DBByte upload failed. Bot was not saved; check DBBYTE_API_KEY, DBBYTE_BUCKET and bucket permissions.'}), 502
+        return _upload_failure(sdir, 'DBByte upload failed: ' + (storage_helper.LAST_ERROR or 'check DBBYTE_API_KEY, DBBYTE_BUCKET and bucket permissions.'), 502)
 
     settings = db.get_settings()
     is_admin_upload = bool(user.get('is_admin'))
     initial_status = 'approved' if (is_admin_upload or settings.get('auto_approve')) else 'pending'
     db.add_script(sid, user['uid'], filename, ext[1:], storage_path, status=initial_status)
-    try:
-        db.update_script(sid, {'env_vars': _upload_env_vars()})
-    except ValueError as exc:
-        return jsonify({'ok': False, 'error': str(exc)}), 400
+    db.update_script(sid, {'env_vars': env_vars})
 
     started = False
     start_message = ''
@@ -574,90 +593,58 @@ def _handle_single(f, user, sid, sdir, filename, ext):
                     'started': started, 'message': msg})
 
 
-def _handle_zip(f, user, sid, sdir):
+def _handle_zip(f, original_name, user, sid, sdir, env_vars):
     tmp = tempfile.mkdtemp(prefix='zip_')
     try:
         zpath = os.path.join(tmp, 'archive.zip')
         extract_dir = os.path.join(tmp, 'extracted')
         os.makedirs(extract_dir, exist_ok=True)
         f.save(zpath)
-        with zipfile.ZipFile(zpath) as z:
-            members = z.infolist()
-            if len(members) > 500:
-                return jsonify({'ok': False, 'error': 'ZIP contains too many files (max 500).'}), 400
-            if sum(int(m.file_size or 0) for m in members) > 100 * 1024 * 1024:
-                return jsonify({'ok': False, 'error': 'Expanded ZIP size exceeds 100 MB.'}), 400
-            root_real = os.path.realpath(extract_dir)
-            for m in members:
-                target = os.path.realpath(os.path.join(extract_dir, m.filename))
-                if os.path.commonpath([root_real, target]) != root_real:
-                    return jsonify({'ok': False, 'error': 'Unsafe ZIP path.'}), 400
-                unix_mode = (m.external_attr >> 16) & 0o170000
-                if unix_mode == 0o120000:
-                    return jsonify({'ok': False, 'error': 'ZIP symlinks are not allowed.'}), 400
-            z.extractall(extract_dir)
 
-        items = os.listdir(extract_dir)
-        if len(items) == 1 and os.path.isdir(os.path.join(extract_dir, items[0])):
-            extract_dir = os.path.join(extract_dir, items[0])
-            items = os.listdir(extract_dir)
+        try:
+            zip_utils.extract_zip(zpath, extract_dir)
+        except zip_utils.ZipError as exc:
+            return _upload_failure(sdir, str(exc))
 
-        py = [x for x in items if x.endswith('.py')]
-        js = [x for x in items if x.endswith('.js')]
-        main, main_type = None, None
-        for p in ['main.py', 'bot.py', 'app.py', 'server.py', 'run.py']:
-            if p in py:
-                main, main_type = p, 'py'; break
-        if not main:
-            for p in ['index.js', 'main.js', 'bot.js', 'app.js']:
-                if p in js:
-                    main, main_type = p, 'js'; break
-        if not main:
-            if py: main, main_type = py[0], 'py'
-            elif js: main, main_type = js[0], 'js'
-        if not main:
-            return jsonify({'ok': False, 'error': 'No .py/.js found'}), 400
+        # Drop a single wrapper folder (my-bot/...), then locate the entry file
+        # (up to 2 folders deep). macOS/.git/node_modules junk is already filtered.
+        project_root = zip_utils.flatten_wrapper(extract_dir)
+        found = zip_utils.find_main(project_root)
+        if not found:
+            return _upload_failure(sdir, 'No .py or .js file found in the ZIP (searched 2 folders deep). Add main.py or bot.py.')
+        main, main_type = found
 
-        for item in os.listdir(extract_dir):
-            src = os.path.join(extract_dir, item)
-            dst = os.path.join(sdir, item)
-            if os.path.isdir(dst): shutil.rmtree(dst)
-            elif os.path.exists(dst): os.remove(dst)
-            shutil.move(src, dst)
+        zip_utils.move_tree(project_root, sdir)
 
         # DBByte is the persistent home for bot source, sessions and data.
         if not storage_helper.sync_script_folder(sdir, user['uid'], sid):
-            shutil.rmtree(sdir, ignore_errors=True)
-            return jsonify({'ok': False, 'error': 'ZIP files could not all be saved to DBByte. Upload cancelled; check DBByte key permissions and 50 MB per-file limit.'}), 502
-        uploaded_files = True  # sync_script_folder above verified the complete upload
+            return _upload_failure(sdir, 'ZIP could not be saved to DBByte: ' + (storage_helper.LAST_ERROR or 'check DBByte key permissions and the 50 MB per-file limit.'), 502)
 
         settings = db.get_settings()
         is_admin_upload = bool(user.get('is_admin'))
         initial_status = 'approved' if (is_admin_upload or settings.get('auto_approve')) else 'pending'
-        storage_path = f"scripts/{user['uid']}/{sid}/" if uploaded_files else ''
+        storage_path = f"scripts/{user['uid']}/{sid}/"
         db.add_script(sid, user['uid'], main, main_type, storage_path, status=initial_status)
-        try:
-            db.update_script(sid, {'env_vars': _upload_env_vars()})
-        except ValueError as exc:
-            return jsonify({'ok': False, 'error': str(exc)}), 400
+        db.update_script(sid, {'env_vars': env_vars})
 
         started = False
         start_message = ''
         if is_admin_upload:
             started, start_message = _start_uploaded_script(sid, user, sdir, main, main_type)
         script = db.get_script(sid) or {}
-        notify_telegram_event('New ZIP upload', {'User': user.get('name', user.get('email', user['uid'])), 'Email': user.get('email', ''), 'File': f.filename, 'Main file': main, 'Status': script.get('status', initial_status), 'Started': started, 'Script ID': sid})
+        notify_telegram_event('New ZIP upload', {'User': user.get('name', user.get('email', user['uid'])), 'Email': user.get('email', ''), 'File': original_name, 'Main file': main, 'Status': script.get('status', initial_status), 'Started': started, 'Script ID': sid})
         try:
             import telegram_admin
             source_paths = []
-            for root, _, filenames in os.walk(sdir):
+            for root, dirs, filenames in os.walk(sdir):
+                dirs[:] = [d for d in dirs if d not in zip_utils.SKIP_DIRS]
                 for item_name in filenames:
                     if len(source_paths) >= 8:
                         break
                     source_paths.append(os.path.join(root, item_name))
                 if len(source_paths) >= 8:
                     break
-            telegram_admin.send_upload_notice(sys.modules[__name__], sid, '📦 NEW ZIP UPLOAD', {'User': user.get('name', user.get('email', user['uid'])), 'Email': user.get('email', ''), 'ZIP': f.filename, 'Main file': main, 'Status': script.get('status', initial_status), 'Script ID': sid}, source_paths)
+            telegram_admin.send_upload_notice(sys.modules[__name__], sid, '📦 NEW ZIP UPLOAD', {'User': user.get('name', user.get('email', user['uid'])), 'Email': user.get('email', ''), 'ZIP': original_name, 'Main file': main, 'Status': script.get('status', initial_status), 'Script ID': sid}, source_paths)
         except Exception as exc:
             print(f'[TELEGRAM] ZIP review notice failed: {exc}', flush=True)
         msg = "Admin ZIP approved and started." if started else (
@@ -669,7 +656,7 @@ def _handle_zip(f, user, sid, sdir):
             storage_helper.sync_script_folder(sdir, user['uid'], sid)
             shutil.rmtree(sdir, ignore_errors=True)
         return jsonify({'ok': True, 'sid': sid, 'status': script.get('status', initial_status),
-                        'started': started, 'message': msg})
+                        'started': started, 'main': main, 'message': msg})
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
@@ -692,7 +679,9 @@ def api_start(sid):
     s, err = _get_script_for_user(sid, user)
     if err: return jsonify({'ok': False, 'error': err[0]}), err[1]
 
-    if s.get('status') != 'approved':
+    # A bot that was stopped (or crashed) must be startable again; only
+    # pending/rejected bots need admin approval first.
+    if s.get('status') not in ('approved', 'running', 'stopped', 'failed'):
         return jsonify({'ok': False, 'error': f"Script status: {s.get('status')} — admin approval required"}), 400
 
     sdir = runner.get_script_dir(s['user_id'], sid)
@@ -741,7 +730,7 @@ def api_restart(sid):
     s, err = _get_script_for_user(sid, user)
     if err: return jsonify({'ok': False}), err[1]
 
-    if s.get('status') not in ('approved', 'running', 'stopped'):
+    if s.get('status') not in ('approved', 'running', 'stopped', 'failed'):
         return jsonify({'ok': False, 'error': 'Not approved'}), 400
 
     runner.stop_script(sid)
@@ -1139,7 +1128,7 @@ def admin_start(sid):
         storage_helper.download_script_folder(s['user_id'], sid, sdir)
     if not os.path.exists(fpath):
         return jsonify({'ok': False, 'error': 'File missing'}), 400
-    ok, msg = runner.start_script(sid, s['user_id'], fpath, s['type'])
+    ok, msg = runner.start_script(sid, s['user_id'], fpath, s['type'], env_vars=s.get('env_vars', {}))
     if ok:
         db.update_script(sid, {'running': True, 'status': 'running'})
     return jsonify({'ok': ok, 'message': msg})
@@ -1199,7 +1188,7 @@ def payment_request():
         notify_telegram_event('New purchase/payment request', {'User': user.get('name', user.get('email', user['uid'])), 'Email': user.get('email', ''), 'Package': plan.get('name', plan_id), 'Amount': f'₹{amount}', 'Validity days': days, 'Bot limit': bots, 'Transaction reference': reference, 'Payment ID': payment_id, 'Approval': 'Package activates immediately after admin approval'})
         try:
             import telegram_admin
-            telegram_admin.send_message(sys.modules[__name__], f'💳 PAYMENT REVIEW\\nUser: {user.get("name", "User")}\\nPackage: {plan.get("name", plan_id)}\\nAmount: ₹{amount}\\nReference: {reference}\\nPayment ID: {payment_id}', [[{'text': '🔎 Review', 'callback_data': f'payment:view:{payment_id}'}, {'text': '✅ Approve', 'callback_data': f'payment:approve:{payment_id}'}, {'text': '❌ Reject', 'callback_data': f'payment:reject:{payment_id}'}]])
+            telegram_admin.send_message(sys.modules[__name__], f'💳 PAYMENT REVIEW\nUser: {user.get("name", "User")}\nPackage: {plan.get("name", plan_id)}\nAmount: ₹{amount}\nReference: {reference}\nPayment ID: {payment_id}', [[{'text': '🔎 Review', 'callback_data': f'payment:view:{payment_id}'}, {'text': '✅ Approve', 'callback_data': f'payment:approve:{payment_id}'}, {'text': '❌ Reject', 'callback_data': f'payment:reject:{payment_id}'}]])
         except Exception as exc:
             print(f'[TELEGRAM] Payment buttons failed: {exc}', flush=True)
         flash('Payment request submit ho gayi. Admin payment verify karke approve karte hi package turant activate ho jayega.', 'success')
