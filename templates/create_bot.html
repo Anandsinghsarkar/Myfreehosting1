@@ -1,12 +1,177 @@
 {% extends "base.html" %}
-{% block title %}Create Bot{% endblock %}
+{% block title %}Deploy Bot{% endblock %}
 {% block content %}
-<h1 class="page-title">🚀 Create / Deploy Bot</h1>
-<div class="card" style="max-width:760px;margin-bottom:16px;"><h3>📦 Upload project ZIP or script</h3><p class="muted small">ZIP may include main.py, requirements.txt, package.json and project files. Requirements are installed automatically on deploy.</p>
-<form id="uploadForm"><label>Project file</label><input type="file" id="fileInput" accept=".py,.js,.zip" required><label style="margin-top:10px;">Environment variables (JSON)</label><textarea id="uploadEnv" style="width:100%;min-height:80px;font-family:monospace;">{}</textarea><button class="btn btn-primary" id="uploadBtn" style="margin-top:12px;">Upload & Deploy</button><div id="uploadStatus" class="muted small" style="margin-top:10px;"></div></form></div>
-<div class="card" style="max-width:760px;"><h3>⌨️ Paste Python code</h3><label>Bot filename</label><input id="botName" value="bot.py" maxlength="100"><label style="margin-top:10px;">Python code</label><textarea id="code" spellcheck="false" placeholder="Paste Python bot code…" style="width:100%;min-height:300px;font-family:monospace;"></textarea><label style="margin-top:10px;">requirements.txt</label><textarea id="requirements" placeholder="pyTelegramBotAPI&#10;requests" style="width:100%;min-height:90px;font-family:monospace;"></textarea><label style="margin-top:10px;">Environment variables (JSON)</label><textarea id="env" placeholder='{"BOT_TOKEN":"your-token"}' style="width:100%;min-height:90px;font-family:monospace;">{}</textarea><button class="btn btn-primary" id="codeBtn" onclick="createCode()" style="margin-top:12px;">Save & Deploy Code</button><div id="codeStatus" class="muted small" style="margin-top:10px;"></div></div>
+<h1 class="page-title"><svg class="ic ic-lg"><use href="#i-upload"/></svg>Deploy a bot</h1>
+<p class="page-sub">Upload a script or a full project ZIP, or paste your code. Dependencies are installed automatically.</p>
+
+<div class="card" style="max-width:780px;">
+    <div class="card-header"><h3><svg class="ic"><use href="#i-folder"/></svg>Upload file or ZIP</h3></div>
+    <form id="uploadForm" novalidate>
+        <label class="dropzone" id="dropzone" for="fileInput">
+            <span class="dz-icon"><svg class="ic"><use href="#i-upload"/></svg></span>
+            <b>Drop your file here or tap to browse</b>
+            <span class="muted small">.py, .js or .zip &middot; up to 20 MB</span>
+            <input type="file" id="fileInput" accept=".py,.js,.zip">
+        </label>
+
+        <div class="file-chip" id="fileChip">
+            <svg class="ic"><use href="#i-file"/></svg>
+            <span class="fc-name" id="fcName"></span>
+            <span class="fc-size" id="fcSize"></span>
+            <button type="button" class="icon-btn" id="fcClear" aria-label="Remove file"><svg class="ic ic-sm"><use href="#i-x"/></svg></button>
+        </div>
+
+        <p class="muted small" style="margin-top:12px;">
+            ZIP tips: put <code>main.py</code> or <code>bot.py</code> at the top (or one folder deep) and add <code>requirements.txt</code> for Python or <code>package.json</code> for Node. Junk such as <code>__MACOSX</code>, <code>.git</code>, <code>node_modules</code> and <code>__pycache__</code> is skipped automatically.
+        </p>
+
+        <label for="uploadEnv" style="margin-top:14px;">Environment variables (JSON)</label>
+        <textarea id="uploadEnv" spellcheck="false" style="min-height:84px;font-family:ui-monospace,Menlo,monospace;" placeholder='{"BOT_TOKEN": "123456:ABC..."}'>{}</textarea>
+
+        <div class="progress" id="progress"><div id="progressBar"></div></div>
+        <div class="status-line" id="uploadStatus"></div>
+
+        <button class="btn btn-primary" id="uploadBtn" type="submit" style="margin-top:10px;width:100%;" disabled>
+            <svg class="ic ic-sm"><use href="#i-zap"/></svg>Upload &amp; deploy
+        </button>
+    </form>
+</div>
+
+<div class="card" style="max-width:780px;">
+    <div class="card-header"><h3><svg class="ic"><use href="#i-code"/></svg>Paste Python code</h3></div>
+
+    <label for="botName">Bot filename</label>
+    <input id="botName" type="text" value="bot.py" maxlength="100">
+
+    <label for="code" style="margin-top:12px;">Python code</label>
+    <textarea id="code" spellcheck="false" placeholder="Paste your bot code…" style="min-height:300px;font-family:ui-monospace,Menlo,monospace;"></textarea>
+
+    <label for="requirements" style="margin-top:12px;">requirements.txt</label>
+    <textarea id="requirements" spellcheck="false" placeholder="pyTelegramBotAPI&#10;requests" style="min-height:90px;font-family:ui-monospace,Menlo,monospace;"></textarea>
+
+    <label for="env" style="margin-top:12px;">Environment variables (JSON)</label>
+    <textarea id="env" spellcheck="false" placeholder='{"BOT_TOKEN":"your-token"}' style="min-height:90px;font-family:ui-monospace,Menlo,monospace;">{}</textarea>
+
+    <button class="btn btn-primary" id="codeBtn" type="button" style="margin-top:14px;width:100%;">
+        <svg class="ic ic-sm"><use href="#i-zap"/></svg>Save &amp; deploy code
+    </button>
+    <div class="status-line" id="codeStatus"></div>
+</div>
+{% endblock %}
+
+{% block scripts %}
 <script>
-document.getElementById('uploadForm').addEventListener('submit',async e=>{e.preventDefault();const f=document.getElementById('fileInput').files[0];if(!f)return;const b=document.getElementById('uploadBtn'),s=document.getElementById('uploadStatus');b.disabled=true;s.textContent='Uploading…';const fd=new FormData();fd.append('file',f);fd.append('env_vars',document.getElementById('uploadEnv').value||'{}');try{const r=await fetch('/upload',{method:'POST',body:fd,headers:{'X-Requested-With':'XMLHttpRequest','Accept':'application/json'}});const raw=await r.text();let d;try{d=JSON.parse(raw);}catch(_){throw new Error('Server returned HTML (HTTP '+r.status+'). '+raw.replace(/<[^>]*>/g,' ').replace(/\\s+/g,' ').slice(0,220));}if(!r.ok||!d.ok){s.textContent='❌ '+(d.error||d.message||('HTTP '+r.status));}else{s.textContent='✅ '+(d.message||'Upload complete');setTimeout(()=>location.href='/my-bots',1000);}if(d.ok)setTimeout(()=>location.href='/my-bots',1000);}catch(e){s.textContent='❌ '+e.message;}b.disabled=false;});
-async function createCode(){const b=document.getElementById('codeBtn'),s=document.getElementById('codeStatus');let env;try{env=JSON.parse(document.getElementById('env').value||'{}');if(!env||Array.isArray(env)||typeof env!=='object')throw Error();}catch(e){s.textContent='Invalid environment JSON';return;}b.disabled=true;s.textContent='Saving and deploying…';try{const r=await fetch('/create-code',{method:'POST',headers:{'Content-Type':'application/json','X-Requested-With':'XMLHttpRequest','Accept':'application/json'},body:JSON.stringify({name:document.getElementById('botName').value,code:document.getElementById('code').value,requirements:document.getElementById('requirements').value,env_vars:env})});const raw=await r.text();let d;try{d=JSON.parse(raw);}catch(_){throw new Error('Server returned HTML (HTTP '+r.status+'). '+raw.replace(/<[^>]*>/g,' ').replace(/\\s+/g,' ').slice(0,220));}s.textContent=(r.ok&&d.ok?'✅ ':'❌ ')+(d.message||d.error||('HTTP '+r.status));if(r.ok&&d.ok)setTimeout(()=>location.href='/my-bots',1200);}catch(e){s.textContent='❌ '+e.message;}b.disabled=false;}
+(function () {
+    const MAX = 20 * 1024 * 1024;
+    const ALLOWED = ['.py', '.js', '.zip'];
+    const $ = (id) => document.getElementById(id);
+    const fileInput = $('fileInput'), dz = $('dropzone'), chip = $('fileChip');
+    const btn = $('uploadBtn'), status = $('uploadStatus'), prog = $('progress'), bar = $('progressBar');
+    let file = null;
+
+    function size(n) { return n < 1024 ? n + ' B' : n < 1048576 ? (n / 1024).toFixed(1) + ' KB' : (n / 1048576).toFixed(1) + ' MB'; }
+    function say(el, msg, kind) { el.textContent = msg || ''; el.className = 'status-line' + (kind ? ' ' + kind : ''); }
+
+    function setFile(f) {
+        file = null; chip.classList.remove('show'); btn.disabled = true; say(status, '');
+        if (!f) return;
+        const ext = (f.name.match(/\.[^.]+$/) || [''])[0].toLowerCase();
+        if (!ALLOWED.includes(ext)) { say(status, 'Only .py, .js or .zip files are allowed.', 'err'); return; }
+        if (f.size > MAX) { say(status, 'File is ' + size(f.size) + ' — the limit is 20 MB.', 'err'); return; }
+        file = f;
+        $('fcName').textContent = f.name; $('fcSize').textContent = size(f.size);
+        chip.classList.add('show'); btn.disabled = false;
+    }
+
+    fileInput.addEventListener('change', () => setFile(fileInput.files[0]));
+    $('fcClear').addEventListener('click', () => { fileInput.value = ''; setFile(null); });
+    ['dragenter', 'dragover'].forEach(ev => dz.addEventListener(ev, e => { e.preventDefault(); dz.classList.add('drag'); }));
+    ['dragleave', 'drop'].forEach(ev => dz.addEventListener(ev, e => { e.preventDefault(); dz.classList.remove('drag'); }));
+    dz.addEventListener('drop', e => { const f = e.dataTransfer.files[0]; if (f) setFile(f); });
+
+    function parseEnv(text) {
+        const t = (text || '').trim() || '{}';
+        const o = JSON.parse(t);
+        if (!o || Array.isArray(o) || typeof o !== 'object') throw new Error('not an object');
+        return t;
+    }
+
+    $('uploadForm').addEventListener('submit', (e) => {
+        e.preventDefault();
+        if (!file) return;
+        let env;
+        try { env = parseEnv($('uploadEnv').value); }
+        catch (_) { say(status, 'Environment variables must be a valid JSON object, e.g. {"BOT_TOKEN":"..."}', 'err'); return; }
+
+        const fd = new FormData();
+        fd.append('file', file);
+        fd.append('env_vars', env);
+
+        btn.disabled = true; say(status, 'Uploading…');
+        prog.classList.add('show'); prog.classList.remove('indeterminate'); bar.style.width = '0%';
+
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', '/upload');
+        xhr.setRequestHeader('X-Requested-With', 'XMLHttpRequest');
+        xhr.setRequestHeader('Accept', 'application/json');
+        xhr.timeout = 10 * 60 * 1000;
+
+        xhr.upload.onprogress = (ev) => {
+            if (!ev.lengthComputable) return;
+            const p = Math.round(ev.loaded / ev.total * 100);
+            bar.style.width = p + '%';
+            say(status, 'Uploading… ' + p + '%');
+        };
+        xhr.upload.onload = () => {
+            prog.classList.add('indeterminate');
+            say(status, file.name.toLowerCase().endsWith('.zip') ? 'Extracting ZIP and saving to storage…' : 'Saving to storage…');
+        };
+        function fail(msg) { prog.classList.remove('show', 'indeterminate'); say(status, msg, 'err'); btn.disabled = false; }
+
+        xhr.onload = () => {
+            let d;
+            try { d = JSON.parse(xhr.responseText); }
+            catch (_) {
+                const txt = (xhr.responseText || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 200);
+                return fail('Server error (HTTP ' + xhr.status + '). ' + txt);
+            }
+            if (xhr.status >= 200 && xhr.status < 300 && d.ok) {
+                prog.classList.remove('indeterminate'); bar.style.width = '100%';
+                say(status, (d.message || 'Upload complete') + (d.main ? '  (entry: ' + d.main + ')' : ''), 'ok');
+                setTimeout(() => { location.href = '/my-bots'; }, 1200);
+            } else {
+                fail(d.error || d.message || ('HTTP ' + xhr.status));
+            }
+        };
+        xhr.onerror = () => fail('Network error. Check your connection and try again.');
+        xhr.ontimeout = () => fail('Timed out while processing. Try a smaller ZIP.');
+        xhr.send(fd);
+    });
+
+    // ---- Paste code ----
+    $('codeBtn').addEventListener('click', async () => {
+        const b = $('codeBtn'), s = $('codeStatus');
+        let env;
+        try { env = JSON.parse($('env').value || '{}'); if (!env || Array.isArray(env) || typeof env !== 'object') throw 0; }
+        catch (_) { say(s, 'Environment variables must be a valid JSON object.', 'err'); return; }
+        if (!$('code').value.trim()) { say(s, 'Code is empty.', 'err'); return; }
+        b.disabled = true; say(s, 'Saving and deploying…');
+        try {
+            const r = await fetch('/create-code', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest', 'Accept': 'application/json'},
+                body: JSON.stringify({name: $('botName').value, code: $('code').value, requirements: $('requirements').value, env_vars: env})
+            });
+            const raw = await r.text();
+            let d;
+            try { d = JSON.parse(raw); }
+            catch (_) { throw new Error('Server error (HTTP ' + r.status + ').'); }
+            const ok = r.ok && d.ok;
+            say(s, d.message || d.error || ('HTTP ' + r.status), ok ? 'ok' : 'err');
+            if (ok) setTimeout(() => { location.href = '/my-bots'; }, 1200);
+        } catch (e) { say(s, e.message, 'err'); }
+        b.disabled = false;
+    });
+})();
 </script>
 {% endblock %}

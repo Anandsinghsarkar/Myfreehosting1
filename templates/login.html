@@ -3,9 +3,12 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Login — A7 HOSTING</title>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+<meta name="theme-color" content="#080b12">
+<title>Sign in — A7 HOSTING</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css', v='20261102-pro-1') }}">
 </head>
 <body>
 
@@ -15,31 +18,31 @@
             <div class="logo-icon">A7</div>
             <div class="logo-text">A7 HOSTING</div>
         </div>
-        <h1>Welcome Back 👋</h1>
-        <p class="sub">Sign in with Google to host your Telegram bots 24/7</p>
+        <h1>Welcome back</h1>
+        <p class="sub">Sign in to deploy and manage your Telegram bots.</p>
 
-        <form id="passwordLoginForm" style="display:grid;gap:12px;margin:18px 0;">
-            <label for="loginEmail" style="text-align:left;font-weight:600;">Admin email</label>
-            <input id="loginEmail" type="email" autocomplete="username" placeholder="Admin email" required
-                   style="width:100%;box-sizing:border-box;padding:13px;border-radius:10px;border:1px solid #334155;background:#0b1220;color:#fff;">
-            <label for="loginPassword" style="text-align:left;font-weight:600;">Password</label>
-            <input id="loginPassword" type="password" autocomplete="current-password" placeholder="Password" required
-                   style="width:100%;box-sizing:border-box;padding:13px;border-radius:10px;border:1px solid #334155;background:#0b1220;color:#fff;">
-            <button type="submit" class="google-btn" id="passwordLoginBtn">Login with Email &amp; Password</button>
-        </form>
-
-        <button id="googleBtn" class="google-btn">
+        <button id="googleBtn" class="google-btn" type="button">
             <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="">
             Continue with Google
         </button>
 
-        <div class="divider">SECURE AUTHENTICATION</div>
+        <div class="divider">ADMIN SIGN IN</div>
 
-        <div id="errorBox" class="flash flash-error" style="display:none;"></div>
+        <form id="passwordLoginForm" style="display:grid;gap:10px;text-align:left;">
+            <div>
+                <label for="loginEmail">Email</label>
+                <input id="loginEmail" type="email" autocomplete="username" placeholder="admin@example.com" required>
+            </div>
+            <div>
+                <label for="loginPassword">Password</label>
+                <input id="loginPassword" type="password" autocomplete="current-password" placeholder="••••••••" required>
+            </div>
+            <button type="submit" class="google-btn solid" id="passwordLoginBtn" style="margin-top:4px;">Sign in</button>
+        </form>
 
-        <div class="footer-note">
-            By continuing, you agree to our Terms of Service & Privacy Policy.
-        </div>
+        <div id="errorBox" class="flash flash-error" style="display:none;margin:14px 0 0;text-align:left;"></div>
+
+        <div class="footer-note">By continuing, you agree to our Terms of Service and Privacy Policy.</div>
     </div>
 </div>
 
@@ -114,7 +117,7 @@ document.getElementById('passwordLoginForm').addEventListener('submit', async (e
         errBox.style.display = 'block';
     } finally {
         button.disabled = false;
-        button.textContent = 'Login with Email & Password';
+        button.textContent = 'Sign in';
     }
 });
 

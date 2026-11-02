@@ -4,109 +4,93 @@
 
 {% block content %}
 <div class="row-between mb-3">
-    <h1 class="page-title" style="margin:0;">🤖 My Bots</h1>
-    <a href="{{ url_for('create_bot') }}" class="btn btn-primary btn-sm">➕ Create</a>
+    <h1 class="page-title" style="margin:0;"><svg class="ic ic-lg"><use href="#i-bot"/></svg>My bots</h1>
+    <a href="{{ url_for('create_bot') }}" class="btn btn-primary btn-sm"><svg class="ic ic-sm"><use href="#i-plus"/></svg>Deploy</a>
 </div>
 
 {% if scripts %}
-    <!-- Mobile Card View -->
     <div class="mobile-bots-cards" style="display: flex; flex-direction: column; gap: 12px;">
         {% for s in scripts %}
-        <div class="card" style="padding: 14px;">
-            <!-- Header row: name + status -->
+        <div class="card" style="padding: 14px; margin-bottom:0;">
             <div class="row-between mb-2">
                 <div style="flex: 1; min-width: 0;">
-                    <strong style="font-size: 14px; display: block; word-break: break-all;">
-                        {{ s.name }}
-                    </strong>
+                    <strong style="font-size: 14px; display: block; word-break: break-all;">{{ s.name }}</strong>
                     <span class="muted small">ID: {{ s.id }} · {{ s.type|upper }}</span>
                 </div>
 
-                <!-- Status badge -->
                 {% if s.status == 'pending' %}
-                    <span class="badge badge-gold">⏳ Pending</span>
+                    <span class="badge badge-gold">Pending</span>
                 {% elif s.status == 'rejected' %}
-                    <span class="badge badge-red">❌ Rejected</span>
+                    <span class="badge badge-red">Rejected</span>
                 {% elif s.running %}
                     <span class="badge badge-on"><span class="dot on"></span> Running</span>
+                {% elif s.status == 'failed' %}
+                    <span class="badge badge-red">Crashed</span>
                 {% elif s.status == 'approved' %}
-                    <span class="badge badge-green">✓ Approved</span>
+                    <span class="badge badge-green">Approved</span>
                 {% else %}
                     <span class="badge badge-off"><span class="dot off"></span> Stopped</span>
                 {% endif %}
             </div>
 
-            <!-- Admin note (agar hai) -->
             {% if s.admin_note %}
-            <div style="padding: 8px 10px; background: rgba(124,58,237,0.08);
-                        border-left: 3px solid var(--primary-hi); border-radius: 6px;
-                        margin-bottom: 10px; font-size: 12px; color: var(--text-dim);">
-                💬 <strong style="color: var(--text);">Admin:</strong> {{ s.admin_note }}
+            <div style="padding: 8px 10px; background: rgba(59,108,246,0.08); border-left: 3px solid var(--primary-hi); border-radius: 6px; margin-bottom: 10px; font-size: 12px; color: var(--text-dim);">
+                <strong style="color: var(--text);">Admin:</strong> {{ s.admin_note }}
             </div>
             {% endif %}
 
-            <!-- Pending info -->
             {% if s.status == 'pending' %}
-            <div class="muted small mb-2" style="padding: 8px 10px;
-                 background: rgba(251,191,36,0.08); border-radius: 6px;
-                 color: var(--gold);">
-                ⏳ Admin approval ka wait kar raha hai. Approve hone ke baad hi start ho payega.
+            <div class="small mb-2" style="padding: 8px 10px; background: rgba(242,184,75,0.08); border-radius: 6px; color: var(--gold);">
+                Waiting for admin approval. The bot can be started once it is approved.
             </div>
             {% endif %}
 
-            <!-- Running stats -->
+            {% if s.last_start_error and not s.running %}
+            <div class="small mb-2" style="padding: 8px 10px; background: rgba(239,68,68,0.08); border-radius: 6px; color: #fca5a5; overflow-wrap:anywhere;">
+                Last start error: {{ s.last_start_error }}
+            </div>
+            {% endif %}
+
             {% if s.running and s.status_info %}
-            <div class="muted small mb-2" style="display:flex; gap:14px;">
-                <span>⏱️ {{ s.status_info.uptime }}s</span>
-                <span>💾 {{ s.status_info.memory_mb }}MB</span>
-                <span>🆔 PID {{ s.status_info.pid }}</span>
+            <div class="muted small mb-2" style="display:flex; gap:14px; flex-wrap:wrap;">
+                <span>Uptime {{ s.status_info.uptime }}s</span>
+                <span>{{ s.status_info.memory_mb }} MB</span>
+                <span>PID {{ s.status_info.pid }}</span>
             </div>
             {% endif %}
 
-            <!-- Action buttons -->
-            <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 10px;">
+            <div style="display: grid; grid-template-columns: 2fr repeat(3, 1fr); gap: 8px; margin-top: 10px;">
                 {% if s.running %}
-                    <button class="btn btn-danger btn-sm" onclick="act('{{ s.id }}', 'stop')" style="padding: 10px 6px;">
-                        ⏹ Stop
-                    </button>
-                {% elif s.status == 'approved' or s.status == 'stopped' %}
-                    <button class="btn btn-primary btn-sm" onclick="act('{{ s.id }}', 'start')" style="padding: 10px 6px;">
-                        ▶ Start
-                    </button>
+                    <button class="btn btn-danger btn-sm" onclick="act('{{ s.id }}', 'stop', this)"><svg class="ic ic-sm"><use href="#i-stop"/></svg>Stop</button>
+                {% elif s.status in ('approved', 'stopped', 'failed', 'running') %}
+                    <button class="btn btn-primary btn-sm" onclick="act('{{ s.id }}', 'start', this)"><svg class="ic ic-sm"><use href="#i-play"/></svg>Start</button>
                 {% else %}
-                    <button class="btn btn-ghost btn-sm" disabled style="padding: 10px 6px; opacity: 0.5;">
-                        {% if s.status == 'pending' %}⏳ Wait{% else %}❌ N/A{% endif %}
-                    </button>
+                    <button class="btn btn-ghost btn-sm" disabled>{% if s.status == 'pending' %}Waiting{% else %}Unavailable{% endif %}</button>
                 {% endif %}
 
-                <button class="btn btn-ghost btn-sm" onclick="act('{{ s.id }}', 'restart')"
-                        style="padding: 10px 6px;"
-                        {% if s.status not in ('approved', 'stopped') and not s.running %}disabled{% endif %}>
-                    🔄
+                <button class="btn btn-ghost btn-sm" title="Restart" aria-label="Restart" onclick="act('{{ s.id }}', 'restart', this)"
+                        {% if s.status not in ('approved', 'stopped', 'failed') and not s.running %}disabled{% endif %}>
+                    <svg class="ic ic-sm"><use href="#i-refresh"/></svg>
                 </button>
 
-                <button class="btn btn-ghost btn-sm" onclick="viewLogs('{{ s.id }}')" style="padding: 10px 6px;">
-                    📜
-                </button>
-                {% if s.type == 'py' and s.status in ('approved', 'running', 'stopped', 'failed') %}
-                <a class="btn btn-ghost btn-sm" href="{{ url_for('edit_bot', sid=s.id) }}" style="padding:10px 6px;">✏️</a>
-                {% endif %}
+                <button class="btn btn-ghost btn-sm" title="Logs" aria-label="Logs" onclick="viewLogs('{{ s.id }}')"><svg class="ic ic-sm"><use href="#i-log"/></svg></button>
 
-                <button class="btn btn-ghost btn-sm" onclick="delBot('{{ s.id }}')" style="padding: 10px 6px;">
-                    🗑️
-                </button>
+                <button class="btn btn-ghost btn-sm" title="Delete" aria-label="Delete" onclick="delBot('{{ s.id }}', this)"><svg class="ic ic-sm"><use href="#i-trash"/></svg></button>
             </div>
+
+            {% if s.type == 'py' and '/' not in s.name and s.status in ('approved', 'running', 'stopped', 'failed') %}
+            <a class="btn btn-ghost btn-sm" href="{{ url_for('edit_bot', sid=s.id) }}" style="margin-top:8px;width:100%;"><svg class="ic ic-sm"><use href="#i-edit"/></svg>Edit code &amp; variables</a>
+            {% endif %}
         </div>
         {% endfor %}
     </div>
 
 {% else %}
-    <!-- Empty state -->
-    <div class="card" style="text-align: center; padding: 50px 20px;">
-        <div style="font-size: 56px; margin-bottom: 12px;">🤖</div>
-        <h3 style="margin-bottom: 8px;">No Bots Yet</h3>
-        <p class="muted mb-3">Create your first bot to get started</p>
-        <a href="{{ url_for('create_bot') }}" class="btn btn-primary">➕ Create Bot</a>
+    <div class="card" style="text-align: center; padding: 48px 20px;">
+        <div class="stat-icon purple" style="width:56px;height:56px;margin:0 auto 14px;border-radius:14px;"><svg class="ic ic-lg"><use href="#i-bot"/></svg></div>
+        <h3 style="margin-bottom: 6px;">No bots yet</h3>
+        <p class="muted mb-3">Deploy your first bot to get started.</p>
+        <a href="{{ url_for('create_bot') }}" class="btn btn-primary"><svg class="ic ic-sm"><use href="#i-upload"/></svg>Deploy a bot</a>
     </div>
 {% endif %}
 
@@ -114,10 +98,10 @@
 <div class="modal-backdrop" id="logModal">
     <div class="modal">
         <div class="row-between mb-2">
-            <h3>📜 Live Log</h3>
+            <h3 id="logTitle" style="display:flex;align-items:center;gap:8px;"><svg class="ic"><use href="#i-log"/></svg>Live log</h3>
             <div class="row">
-                <button class="btn btn-ghost btn-xs" onclick="refreshLog()">🔄 Refresh</button>
-                <button class="icon-btn" onclick="closeModal()">✕</button>
+                <button class="btn btn-ghost btn-xs" onclick="refreshLog()"><svg class="ic ic-sm"><use href="#i-refresh"/></svg>Refresh</button>
+                <button class="icon-btn" onclick="closeModal()" aria-label="Close"><svg class="ic"><use href="#i-x"/></svg></button>
             </div>
         </div>
         <div class="log-box" id="logContent" style="max-height: 500px;">Loading…</div>
@@ -128,55 +112,40 @@
 let currentLogSid = null;
 let logAutoRefresh = null;
 
-async function act(sid, action) {
-    const btn = event ? event.target : null;
-    if (btn) { btn.disabled = true; btn.style.opacity = '0.5'; }
-
-    try {
-        const res = await fetch(`/api/script/${sid}/${action}`, { method: 'POST' });
-        const raw = await res.text();
-        let data;
-        try { data = JSON.parse(raw); }
-        catch (_) { throw new Error('Server returned HTML instead of JSON (HTTP '+res.status+'). Check Render logs.'); }
-
-        if (data.ok) {
-            location.reload();
-        } else {
-            alert(data.message || data.error || 'Action failed');
-            if (btn) { btn.disabled = false; btn.style.opacity = '1'; }
-        }
-    } catch (e) {
-        alert('Error: ' + e.message);
-        if (btn) { btn.disabled = false; btn.style.opacity = '1'; }
-    }
+async function readJson(res) {
+    const raw = await res.text();
+    try { return JSON.parse(raw); }
+    catch (_) { throw new Error('Server returned HTML instead of JSON (HTTP ' + res.status + '). Check Render logs.'); }
 }
 
-async function delBot(sid) {
-    if (!confirm('Delete this bot permanently? Ye sab files bhi delete ho jayengi.')) return;
+async function act(sid, action, btn) {
+    if (btn) { btn.disabled = true; btn.style.opacity = '0.5'; }
     try {
-        const res = await fetch(`/api/script/${sid}/delete`, { method: 'POST' });
-        const raw = await res.text();
-        let data;
-        try { data = JSON.parse(raw); }
-        catch (_) { throw new Error('Server returned HTML instead of JSON (HTTP '+res.status+'). Check Render logs.'); }
-        if (data.ok) {
-            location.reload();
-        } else {
-            alert(data.error || 'Delete failed');
-        }
-    } catch (e) {
-        alert('Error: ' + e.message);
-    }
+        const res = await fetch(`/api/script/${sid}/${action}`, { method: 'POST', headers: {'X-Requested-With': 'XMLHttpRequest'} });
+        const data = await readJson(res);
+        if (data.ok) { location.reload(); return; }
+        alert(data.message || data.error || 'Action failed');
+    } catch (e) { alert('Error: ' + e.message); }
+    if (btn) { btn.disabled = false; btn.style.opacity = '1'; }
+}
+
+async function delBot(sid, btn) {
+    if (!confirm('Delete this bot permanently? All its files will be removed.')) return;
+    if (btn) btn.disabled = true;
+    try {
+        const res = await fetch(`/api/script/${sid}/delete`, { method: 'POST', headers: {'X-Requested-With': 'XMLHttpRequest'} });
+        const data = await readJson(res);
+        if (data.ok) { location.reload(); return; }
+        alert(data.error || 'Delete failed');
+    } catch (e) { alert('Error: ' + e.message); }
+    if (btn) btn.disabled = false;
 }
 
 async function viewLogs(sid) {
     currentLogSid = sid;
     document.getElementById('logModal').classList.add('show');
     document.getElementById('logContent').textContent = 'Loading…';
-
     await refreshLog();
-
-    // Auto-refresh every 3s
     if (logAutoRefresh) clearInterval(logAutoRefresh);
     logAutoRefresh = setInterval(refreshLog, 3000);
 }
@@ -187,47 +156,26 @@ async function refreshLog() {
         const res = await fetch(`/api/script/${currentLogSid}/logs`);
         const data = await res.json();
         if (data.ok) {
-            const log = data.log || '(empty)';
             const el = document.getElementById('logContent');
-            el.textContent = log;
-            el.scrollTop = el.scrollHeight;
-
-            // Status indicator
+            const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 60;
+            el.textContent = data.log || '(empty)';
+            if (nearBottom) el.scrollTop = el.scrollHeight;
             const st = data.status || {};
-            const header = document.querySelector('#logModal h3');
-            if (header) {
-                const statusText = st.running
-                    ? `<span class="badge badge-on" style="margin-left:8px;">
-                         <span class="dot on"></span> Running
-                       </span>`
-                    : `<span class="badge badge-off" style="margin-left:8px;">
-                         <span class="dot off"></span> Stopped
-                       </span>`;
-                header.innerHTML = `📜 Live Log ${statusText}`;
-            }
+            const badge = st.running
+                ? '<span class="badge badge-on" style="margin-left:8px;"><span class="dot on"></span> Running</span>'
+                : '<span class="badge badge-off" style="margin-left:8px;"><span class="dot off"></span> Stopped</span>';
+            document.getElementById('logTitle').innerHTML = '<svg class="ic"><use href="#i-log"/></svg>Live log ' + badge;
         }
-    } catch (e) {
-        console.error(e);
-    }
+    } catch (e) { console.error(e); }
 }
 
 function closeModal() {
     document.getElementById('logModal').classList.remove('show');
-    if (logAutoRefresh) {
-        clearInterval(logAutoRefresh);
-        logAutoRefresh = null;
-    }
+    if (logAutoRefresh) { clearInterval(logAutoRefresh); logAutoRefresh = null; }
     currentLogSid = null;
 }
 
-// Modal close on backdrop click
-document.getElementById('logModal').addEventListener('click', (e) => {
-    if (e.target.id === 'logModal') closeModal();
-});
-
-// Esc key to close
-document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') closeModal();
-});
+document.getElementById('logModal').addEventListener('click', (e) => { if (e.target.id === 'logModal') closeModal(); });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeModal(); });
 </script>
 {% endblock %}
