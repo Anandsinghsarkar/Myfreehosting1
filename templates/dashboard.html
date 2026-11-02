@@ -179,7 +179,10 @@
 async function toggleBot(sid, isRunning) {
     const url = isRunning ? `/api/script/${sid}/stop` : `/api/script/${sid}/start`;
     const res = await fetch(url, { method: 'POST' });
-    const data = await res.json();
+    const raw = await res.text();
+    let data;
+    try { data = JSON.parse(raw); }
+    catch (_) { alert('Server returned HTML instead of JSON (HTTP '+res.status+'). Check Render logs.'); return; }
     if (data.ok) {
         location.reload();
     } else {
