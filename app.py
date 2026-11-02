@@ -474,15 +474,17 @@ def edit_bot(sid):
         if not isinstance(env_vars, dict):
             return jsonify({'ok': False, 'error': 'Environment variables must be JSON object.'}), 400
         env_vars = {str(k): str(v) for k, v in env_vars.items() if re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]{0,127}', str(k))}
-        if not storage_helper.sync_script_folder(sdir, script['user_id'], sid):
-            return jsonify({'ok': False, 'error': 'DBByte save failed; local copy kept.'}), 502
         db.update_script(sid, {'env_vars': env_vars, 'updated_at': datetime.utcnow().isoformat()})
-        if was_running:
-            ok, msg = runner.start_script(sid, script['user_id'], os.path.join(sdir, rel), 'py', env_vars=env_vars)
-            db.update_script(sid, {'running': bool(ok), 'status': 'running' if ok else 'failed'})
-            return jsonify({'ok': ok, 'message': 'Saved and redeployed.' if ok else msg})
-        shutil.rmtree(sdir, ignore_errors=True)
-        return jsonify({'ok': True, 'message': 'Saved. Start the bot to deploy the updated code.'})
+        # Keep the edited copy on Render. If it was running, restart it in the
+        # background; then back up the updated source/session files to DBByte.
+        _queue_bot_deploy(
+            sid, script['user_id'], sdir,
+            file_path=os.path.join(sdir, rel) if was_running else None,
+            file_type='py',
+            env_vars=env_vars,
+        )
+        message = 'Changes saved on Render. Restart and DBByte backup queued.' if was_running else 'Changes saved on Render. DBByte backup queued; start the bot when ready.'
+        return jsonify({'ok': True, 'queued': True, 'message': message})
     sdir = runner.get_script_dir(script['user_id'], sid)
     if not os.path.isfile(os.path.join(sdir, script['name'])):
         storage_helper.download_script_folder(script['user_id'], sid, sdir)
