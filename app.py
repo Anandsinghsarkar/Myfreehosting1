@@ -116,6 +116,21 @@ def scan_code(text):
     return True, None
 
 
+
+@app.errorhandler(413)
+def upload_too_large(_error):
+    if request.path in ('/upload', '/create-code') or request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+        return jsonify({'ok': False, 'error': 'Upload too large. Maximum request size is 20 MB.'}), 413
+    return 'Request too large (20 MB maximum).', 413
+
+@app.errorhandler(500)
+def api_internal_error(_error):
+    if request.path in ('/upload', '/create-code') or request.path.startswith('/edit-bot/') or request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+        app.logger.exception('Deployment API failed')
+        return jsonify({'ok': False, 'error': 'Server error while processing deployment. Check Render logs for the traceback.'}), 500
+    return 'Internal Server Error', 500
+
+
 # ========== PUBLIC ==========
 @app.route('/')
 def index():
