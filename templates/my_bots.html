@@ -88,6 +88,9 @@
                 <button class="btn btn-ghost btn-sm" onclick="viewLogs('{{ s.id }}')" style="padding: 10px 6px;">
                     📜
                 </button>
+                {% if s.type == 'py' and s.status in ('approved', 'running', 'stopped', 'failed') %}
+                <a class="btn btn-ghost btn-sm" href="{{ url_for('edit_bot', sid=s.id) }}" style="padding:10px 6px;">✏️</a>
+                {% endif %}
 
                 <button class="btn btn-ghost btn-sm" onclick="delBot('{{ s.id }}')" style="padding: 10px 6px;">
                     🗑️
