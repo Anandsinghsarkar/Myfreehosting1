@@ -179,18 +179,33 @@ def _start_keep_alive():
 @app.route('/api/admin/storage')
 @admin_required
 def api_admin_storage():
-    """Return actual Render filesystem usage plus mirrored Firebase bot-file usage."""
+    """Show this app's temporary bot files, not the host machine's misleading disk capacity."""
     try:
-        usage = shutil.disk_usage(UPLOAD_DIR)
-        render_storage = {
-            'total_bytes': usage.total,
-            'used_bytes': usage.used,
-            'free_bytes': usage.free,
-            'used_percent': round((usage.used / usage.total) * 100, 2) if usage.total else 0,
-        }
+        local_used = 0
+        if os.path.isdir(UPLOAD_DIR):
+            for root, dirs, files in os.walk(UPLOAD_DIR, followlinks=False):
+                dirs[:] = [d for d in dirs if not os.path.islink(os.path.join(root, d))]
+                for filename in files:
+                    path = os.path.join(root, filename)
+                    try:
+                        if not os.path.islink(path):
+                            local_used += os.path.getsize(path)
+                    except OSError:
+                        pass
         cloud_storage = storage_helper.get_storage_usage()
-        return jsonify({'ok': True, 'render': render_storage, 'firebase': cloud_storage})
+        return jsonify({
+            'ok': True,
+            'render': {
+                'used_bytes': local_used,
+                'total_bytes': None,
+                'free_bytes': None,
+                'used_percent': None,
+                'scope': 'This app temporary bot runtime files only'
+            },
+            'firebase': cloud_storage
+        })
     except Exception as exc:
+        app.logger.exception("Storage monitor failed")
         return jsonify({'ok': False, 'error': str(exc)}), 500
 
 
@@ -526,12 +541,23 @@ def api_start(sid):
 def api_stop(sid):
     user = current_user()
     s, err = _get_script_for_user(sid, user)
-    if err: return jsonify({'ok': False}), err[1]
+    if err:
+        return jsonify({'ok': False, 'error': err[0]}), err[1]
 
+    sdir = os.path.join(UPLOAD_DIR, str(s['user_id']), str(sid))
     ok, msg = runner.stop_script(sid)
-    if ok:
+    if not ok:
+        return jsonify({'ok': False, 'message': msg}), 409
+    try:
+        # Also sync files if the bot had already exited before Stop was clicked.
+        if os.path.isdir(sdir) and not storage_helper.sync_script_folder(sdir, s['user_id'], sid):
+            return jsonify({'ok': False, 'error': 'Bot stopped, but Firebase sync failed. Temporary files were kept for safety.'}), 502
+        shutil.rmtree(sdir, ignore_errors=False) if os.path.isdir(sdir) else None
         db.update_script(sid, {'running': False, 'status': 'stopped'})
-    return jsonify({'ok': ok, 'message': msg})
+        return jsonify({'ok': True, 'message': 'Stopped. Runtime files saved to Firebase and cleared from Render.'})
+    except Exception as exc:
+        app.logger.exception("Stop cleanup failed for %s", sid)
+        return jsonify({'ok': False, 'error': f'Bot stopped, cleanup failed: {exc}'}), 500
 
 
 @app.route('/api/script/<sid>/restart', methods=['POST'])
@@ -571,25 +597,26 @@ def api_logs(sid):
 def api_delete(sid):
     user = current_user()
     s, err = _get_script_for_user(sid, user)
-    if err: return jsonify({'ok': False, 'error': err[0]}), err[1]
-
-    # Stop the process first, then remove its local folder and cloud mirror.
-    runner.stop_script(sid)
-    if s.get('storage_path'):
-        if not storage_helper.delete_script_folder(s['user_id'], sid):
-            return jsonify({'ok': False, 'error': 'Cloud files could not be fully deleted. Database entry was kept so you can retry.'}), 502
+    if err:
+        return jsonify({'ok': False, 'error': err[0]}), err[1]
 
     sdir = os.path.join(UPLOAD_DIR, str(s['user_id']), str(sid))
     try:
+        # Stop first. If the process is already gone, continue with orphan cleanup.
+        runner.stop_script(sid)
+        # Always inspect/delete the Firebase prefix, even when the Firestore
+        # storage_path field is blank or stale (older uploads often had this).
+        if not storage_helper.delete_script_folder(s['user_id'], sid):
+            return jsonify({'ok': False, 'error': 'Firebase files could not be verified as deleted. Bot record was kept; retry after checking Firebase Storage permissions.'}), 502
         if os.path.isdir(sdir):
             shutil.rmtree(sdir)
         if os.path.exists(sdir):
-            return jsonify({'ok': False, 'error': 'Local bot folder still exists; deletion was not completed.'}), 500
-        # Remove the Firestore script document only after file cleanup succeeds.
+            return jsonify({'ok': False, 'error': 'Temporary Render folder still exists; Firestore record was kept.'}), 500
         db.delete_script(sid)
-        return jsonify({'ok': True, 'message': 'Bot record and files deleted.'})
+        return jsonify({'ok': True, 'message': 'Bot, Firebase files and Render temporary files deleted.'})
     except Exception as exc:
-        return jsonify({'ok': False, 'error': f'Cleanup failed: {exc}'}), 500
+        app.logger.exception("Bot delete failed for %s", sid)
+        return jsonify({'ok': False, 'error': f'Delete failed: {type(exc).__name__}: {exc}'}), 500
 
 
 # ========== ADMIN: Review Queue ==========
@@ -798,10 +825,11 @@ def admin_delete_user(uid):
         return redirect(url_for('admin_dashboard'))
     for script in db.list_scripts(uid):
         runner.stop_script(script['id'])
-        if script.get('storage_path') and not storage_helper.delete_script_folder(uid, script['id']):
+        if not storage_helper.delete_script_folder(uid, script['id']):
             flash(f"Firebase Storage delete failed for {script.get('name', script['id'])}; user not deleted. Check Storage permissions and retry.", "error")
             return redirect(url_for('admin_dashboard'))
-    shutil.rmtree(os.path.join(UPLOAD_DIR, uid), ignore_errors=True)
+        shutil.rmtree(os.path.join(UPLOAD_DIR, str(uid), str(script['id'])), ignore_errors=True)
+    shutil.rmtree(os.path.join(UPLOAD_DIR, str(uid)), ignore_errors=True)
     db.delete_user(uid)
     flash("User deleted", "success")
     return redirect(url_for('admin_dashboard'))
