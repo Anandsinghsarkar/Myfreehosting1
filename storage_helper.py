@@ -1,160 +1,266 @@
 # -*- coding: utf-8 -*-
 """
-Firebase Storage helper — scripts ko Render restart ke baad bachane ke liye.
+DBByte REST storage adapter.
+Persistent bot objects are private and namespaced by user + bot. Firebase remains
+in use only for Authentication and Firestore application records.
 """
 import os
-from firebase_config import get_bucket
+import time
+import base64
+import hashlib
+from urllib.parse import quote
+import requests
+
+BASE_URL = os.environ.get("DBBYTE_API_URL", "https://api.dbbyte.com").rstrip("/")
+API_KEY = os.environ.get("DBBYTE_API_KEY", "").strip()
+BUCKET = os.environ.get("DBBYTE_BUCKET", "cyber-bot-storage").strip()
+TIMEOUT = (10, 90)
+MAX_OBJECT_BYTES = 50 * 1024 * 1024
+_SYNC_CACHE = {}
+
+
+class DBByteError(RuntimeError):
+    pass
+
+
+def _ready():
+    if not API_KEY:
+        raise DBByteError("DBBYTE_API_KEY is missing in Render Environment.")
+    if not BUCKET:
+        raise DBByteError("DBBYTE_BUCKET is missing in Render Environment.")
+
+
+def _headers():
+    _ready()
+    return {"Authorization": f"Bearer {API_KEY}"}
+
+
+def _url(path):
+    return f"{BASE_URL}{path}"
+
+
+def _request(method, path, **kwargs):
+    try:
+        response = requests.request(method, _url(path), headers=_headers(), timeout=TIMEOUT, **kwargs)
+    except requests.RequestException as exc:
+        raise DBByteError(f"DBByte connection failed: {exc}") from exc
+    if not response.ok:
+        try:
+            detail = response.json().get("error") or response.json().get("message") or response.text
+        except Exception:
+            detail = response.text
+        raise DBByteError(f"DBByte HTTP {response.status_code}: {str(detail)[:350]}")
+    return response
+
+
+def _uid_tag(user_id):
+    return hashlib.sha256(str(user_id).encode("utf-8")).hexdigest()[:12]
+
+
+def _remote_name(user_id, script_id, relative_path):
+    encoded = base64.urlsafe_b64encode(relative_path.replace("\\", "/").encode("utf-8")).decode("ascii").rstrip("=")
+    return f"scripts--{_uid_tag(user_id)}--{script_id}--{encoded}"
+
+
+def _decode_relative(remote_name):
+    parts = remote_name.split("--", 3)
+    if len(parts) != 4 or parts[0] != "scripts":
+        return None
+    encoded = parts[3]
+    try:
+        encoded += "=" * (-len(encoded) % 4)
+        rel = base64.urlsafe_b64decode(encoded.encode("ascii")).decode("utf-8")
+        rel = rel.replace("\\", "/").lstrip("/")
+        if not rel or any(p in ("", ".", "..") for p in rel.split("/")):
+            return None
+        return rel
+    except Exception:
+        return None
+
+
+def _list_all():
+    files, cursor = [], None
+    while True:
+        params = {"limit": 1000}
+        if cursor:
+            params["cursor"] = cursor
+        data = _request("GET", f"/storage/{quote(BUCKET, safe='')}/list", params=params).json()
+        files.extend(data.get("files") or [])
+        if not data.get("hasMore") or not data.get("nextCursor"):
+            break
+        cursor = data["nextCursor"]
+    return files
 
 
 def upload_script_file(local_path, user_id, script_id, filename):
     try:
-        bucket = get_bucket()
-        if not bucket:
-            return None
-        blob_path = f"scripts/{user_id}/{script_id}/{filename}"
-        blob = bucket.blob(blob_path)
-        blob.upload_from_filename(local_path)
-        print(f"✅ Uploaded: {blob_path}")
-        return blob_path
-    except Exception as e:
-        print(f"❌ Upload failed: {e}")
+        relative = str(filename).replace("\\", "/")
+        remote_name = _remote_name(user_id, script_id, relative)
+        size = os.path.getsize(local_path)
+        if size > MAX_OBJECT_BYTES:
+            raise DBByteError(f"{filename} exceeds DBByte's 50 MB per-file upload limit.")
+        with open(local_path, "rb") as handle:
+            response = _request(
+                "POST", f"/storage/{quote(BUCKET, safe='')}/upload",
+                params={"overwrite": "true"},
+                files={"file": (remote_name, handle, "application/octet-stream")},
+            )
+        _SYNC_CACHE[(str(user_id), str(script_id), relative)] = (os.path.getsize(local_path), os.stat(local_path).st_mtime_ns)
+        return response.json().get("key") or remote_name
+    except Exception as exc:
+        print(f"[DBBYTE] Upload failed for {script_id}/{filename}: {exc}", flush=True)
         return None
 
 
 def upload_script_folder(local_dir, user_id, script_id):
-    """Best-effort mirror; return partial results so later deletion can clean them up."""
     uploaded = {}
-    try:
-        bucket = get_bucket()
-        if not bucket:
-            return {}
-        for root, dirs, files in os.walk(local_dir):
-            for fn in files:
-                local_file = os.path.join(root, fn)
-                rel = os.path.relpath(local_file, local_dir).replace('\\', '/')
-                blob_path = f"scripts/{user_id}/{script_id}/{rel}"
-                bucket.blob(blob_path).upload_from_filename(local_file)
-                uploaded[rel] = blob_path
-        print(f"✅ Uploaded {len(uploaded)} files for {script_id}")
-        return uploaded
-    except Exception as e:
-        print(f"❌ Folder upload failed after {len(uploaded)} file(s): {e}")
-        return uploaded
+    for root, dirs, filenames in os.walk(local_dir):
+        dirs[:] = [d for d in dirs if not os.path.islink(os.path.join(root, d))]
+        for filename in filenames:
+            path = os.path.join(root, filename)
+            if os.path.islink(path):
+                continue
+            rel = os.path.relpath(path, local_dir).replace("\\", "/")
+            remote = upload_script_file(path, user_id, script_id, rel)
+            if remote:
+                uploaded[rel] = remote
+    return uploaded
+
+
+def sync_script_folder(local_dir, user_id, script_id):
+    """Upload only new/changed files; remove stale remote objects for this bot."""
+    if not os.path.isdir(local_dir):
+        return False
+    expected = {}
+    for root, dirs, filenames in os.walk(local_dir):
+        dirs[:] = [d for d in dirs if not os.path.islink(os.path.join(root, d))]
+        for filename in filenames:
+            path = os.path.join(root, filename)
+            if os.path.islink(path):
+                continue
+            rel = os.path.relpath(path, local_dir).replace("\\", "/")
+            stat = os.stat(path)
+            expected[rel] = (stat.st_size, stat.st_mtime_ns)
+
+    prefix = f"scripts--{_uid_tag(user_id)}--{script_id}--"
+    cache_prefix = (str(user_id), str(script_id))
+    ok = True
+    for rel, signature in expected.items():
+        if _SYNC_CACHE.get((cache_prefix[0], cache_prefix[1], rel)) == signature:
+            continue
+        if not upload_script_file(os.path.join(local_dir, rel), user_id, script_id, rel):
+            ok = False
+
+    # Prune only during explicit full syncs, not on the runner's periodic sync loop.
+    if os.environ.get("DBBYTE_PRUNE_ON_SYNC", "true").lower() == "true":
+        try:
+            remote = [f for f in _list_all() if str(f.get("name", "")).startswith(prefix)]
+            for item in remote:
+                rel = _decode_relative(str(item.get("name", "")))
+                if rel and rel not in expected:
+                    _delete_remote_name(str(item["name"]))
+                    _SYNC_CACHE.pop((str(user_id), str(script_id), rel), None)
+        except Exception as exc:
+            print(f"[DBBYTE] Stale-file cleanup warning for {script_id}: {exc}", flush=True)
+            # Do not fail a successful upload because list/delete cleanup failed.
+    return ok
 
 
 def download_script_folder(user_id, script_id, dest_dir):
     try:
-        bucket = get_bucket()
-        if not bucket:
+        prefix = f"scripts--{_uid_tag(user_id)}--{script_id}--"
+        objects = [f for f in _list_all() if str(f.get("name", "")).startswith(prefix)]
+        if not objects:
             return False
-        prefix = f"scripts/{user_id}/{script_id}/"
-        blobs = list(bucket.list_blobs(prefix=prefix))
-        if not blobs:
-            return False
-        os.makedirs(dest_dir, exist_ok=True)
         count = 0
-        for blob in blobs:
-            rel = blob.name[len(prefix):]
+        for item in objects:
+            remote_name = str(item.get("name", ""))
+            rel = _decode_relative(remote_name)
             if not rel:
                 continue
-            local_path = os.path.join(dest_dir, rel)
-            os.makedirs(os.path.dirname(local_path), exist_ok=True)
-            blob.download_to_filename(local_path)
+            response = _request(
+                "GET",
+                f"/storage/{quote(BUCKET, safe='')}/download/{quote(remote_name, safe='')}",
+                stream=True,
+            )
+            target = os.path.abspath(os.path.join(dest_dir, *rel.split("/")))
+            if not target.startswith(os.path.abspath(dest_dir) + os.sep):
+                continue
+            os.makedirs(os.path.dirname(target), exist_ok=True)
+            with open(target, "wb") as out:
+                for chunk in response.iter_content(1024 * 256):
+                    if chunk:
+                        out.write(chunk)
+            _SYNC_CACHE[(str(user_id), str(script_id), rel)] = (os.path.getsize(target), os.stat(target).st_mtime_ns)
             count += 1
-        print(f"✅ Downloaded {count} files for {script_id}")
+        print(f"[DBBYTE] Downloaded {count} files for bot {script_id}", flush=True)
         return count > 0
-    except Exception as e:
-        print(f"❌ Download failed: {e}")
+    except Exception as exc:
+        print(f"[DBBYTE] Download failed for {script_id}: {exc}", flush=True)
         return False
+
+
+def _delete_remote_name(name):
+    _request(
+        "DELETE",
+        f"/storage/{quote(BUCKET, safe='')}/delete/{quote(name, safe='')}",
+        params={"version": "all"},
+    )
 
 
 def delete_script_folder(user_id, script_id):
-    """Delete and verify every object below this bot's Firebase Storage prefix."""
     try:
-        bucket = get_bucket()
-        if not bucket:
-            print("[FIREBASE] Storage bucket unavailable; refusing to report deletion success.")
-            return False
-        prefix = f"scripts/{user_id}/{script_id}/"
-        blobs = list(bucket.list_blobs(prefix=prefix))
-        for blob in blobs:
-            blob.delete()
-        # Verify the prefix is empty before the Firestore bot record is removed.
-        remaining = list(bucket.list_blobs(prefix=prefix))
+        prefix = f"scripts--{_uid_tag(user_id)}--{script_id}--"
+        objects = [f for f in _list_all() if str(f.get("name", "")).startswith(prefix)]
+        for item in objects:
+            _delete_remote_name(str(item["name"]))
+        remaining = [f for f in _list_all() if str(f.get("name", "")).startswith(prefix)]
         if remaining:
-            print(f"[FIREBASE] Delete verification failed for {prefix}: {len(remaining)} object(s) remain.")
-            return False
-        print(f"[FIREBASE] Deleted {len(blobs)} object(s) under {prefix}")
+            raise DBByteError(f"{len(remaining)} DBByte object(s) remain after delete.")
+        for key in list(_SYNC_CACHE):
+            if key[0] == str(user_id) and key[1] == str(script_id):
+                _SYNC_CACHE.pop(key, None)
+        print(f"[DBBYTE] Deleted {len(objects)} objects for bot {script_id}", flush=True)
         return True
     except Exception as exc:
-        print(f"[FIREBASE] Bot folder deletion failed for {user_id}/{script_id}: {type(exc).__name__}: {exc}")
+        print(f"[DBBYTE] Delete failed for {user_id}/{script_id}: {exc}", flush=True)
         return False
 
 
-def sync_script_folder(local_dir, user_id, script_id):
-    """Mirror all current runtime files to Firebase and report whether all files synced."""
-    expected = 0
-    for _, _, filenames in os.walk(local_dir):
-        expected += len(filenames)
-    if expected == 0:
-        return True
-    uploaded = upload_script_folder(local_dir, user_id, script_id)
-    return len(uploaded) == expected
-
-
 def read_script_file(user_id, script_id, filename):
-    """Read a saved file directly from Firebase without creating a Render copy."""
     try:
-        bucket = get_bucket()
-        if not bucket:
-            return None
-        blob = bucket.blob(f"scripts/{user_id}/{script_id}/{filename}")
-        if not blob.exists():
-            return None
-        return blob.download_as_bytes()
+        remote_name = _remote_name(user_id, script_id, filename)
+        response = _request(
+            "GET",
+            f"/storage/{quote(BUCKET, safe='')}/download/{quote(remote_name, safe='')}",
+        )
+        return response.content
     except Exception as exc:
-        print(f"[FIREBASE] Remote read failed for {script_id}/{filename}: {exc}")
+        print(f"[DBBYTE] Remote read failed for {script_id}/{filename}: {exc}", flush=True)
         return None
 
 
 def upload_qr_image(local_path, filename):
-    """Admin QR code upload kare to Firebase Storage me save."""
-    try:
-        bucket = get_bucket()
-        if not bucket:
-            return None
-        blob_path = f"assets/qr/{filename}"
-        blob = bucket.blob(blob_path)
-        blob.upload_from_filename(local_path)
-        blob.make_public()
-        return blob.public_url
-    except Exception as e:
-        print(f"❌ QR upload failed: {e}")
-        return None
+    # QR images remain available through the existing local/static upload path.
+    # Private DBByte objects intentionally are not exposed as permanent public URLs.
+    return None
 
 
 def get_storage_usage():
-    """Measure actual bytes stored under scripts/ and return actionable diagnostics."""
-    from firebase_config import get_storage_diagnostics
-    result = {'configured': False, 'used_bytes': 0, 'file_count': 0}
+    """Return real bytes and object count for this app's bot objects in DBByte."""
+    result = {
+        "configured": False, "available": False, "used_bytes": 0,
+        "file_count": 0, "bucket": BUCKET, "provider": "DBByte",
+    }
     try:
-        diagnostics = get_storage_diagnostics()
-        result.update(diagnostics)
-        bucket = get_bucket()
-        if not bucket:
-            result['error'] = (
-                "No bucket found. Check Firebase Console > Storage > Files, "
-                "service-account project, and FIREBASE_STORAGE_BUCKET."
-            )
-            return result
-        result['configured'] = True
-        total = 0
-        count = 0
-        for blob in bucket.list_blobs(prefix='scripts/'):
-            total += int(blob.size or 0)
-            count += 1
-        result['used_bytes'] = total
-        result['file_count'] = count
+        _ready()
+        health = _request("GET", "/health").json()
+        objects = [f for f in _list_all() if str(f.get("name", "")).startswith("scripts--")]
+        result["configured"] = True
+        result["available"] = True
+        result["api_status"] = health.get("status", "unknown")
+        result["used_bytes"] = sum(int(f.get("size") or 0) for f in objects)
+        result["file_count"] = len(objects)
     except Exception as exc:
-        result['error'] = f"{type(exc).__name__}: {exc}"
+        result["error"] = str(exc)
     return result
