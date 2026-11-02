@@ -231,6 +231,7 @@ def start_script(script_id, user_id, file_path, file_type, env_vars=None):
         for key, value in env_vars.items():
             if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,127}", str(key)):
                 child_env[str(key)] = str(value)
+    deps_declared = False
     try:
         req_path = os.path.join(script_dir, "requirements.txt")
         if file_type == "py" and os.path.isfile(req_path):
@@ -247,6 +248,7 @@ def start_script(script_id, user_id, file_path, file_type, env_vars=None):
             if install.returncode != 0:
                 raise RuntimeError("requirements.txt installation failed; see install log")
             child_env["PYTHONPATH"] = packages_dir + os.pathsep + child_env.get("PYTHONPATH", "")
+            deps_declared = True
         elif file_type == "js" and os.path.isfile(os.path.join(script_dir, "package.json")):
             log_file.write("[SYSTEM] Installing package.json dependencies...\n")
             log_file.flush()
@@ -256,7 +258,7 @@ def start_script(script_id, user_id, file_path, file_type, env_vars=None):
                 raise RuntimeError("npm install failed; see install log")
         log_file.write("[SYSTEM] Dependencies ready. Launching process...\n")
         log_file.flush()
-        missing = _precheck(cmd, script_dir, log_file)
+        missing = None if deps_declared else _precheck(cmd, script_dir, log_file)
         if missing:
             log_file.write(f"[SYSTEM] Missing module: {missing}\n")
             log_file.flush()
