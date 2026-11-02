@@ -70,6 +70,8 @@ def login_required(f):
     @wraps(f)
     def w(*a, **kw):
         if not current_user():
+            if request.is_json or request.headers.get('X-Requested-With') == 'XMLHttpRequest' or request.path in ('/upload', '/create-code') or request.path.startswith('/edit-bot/'):
+                return jsonify({'ok': False, 'error': 'Login session expired. Refresh the page and sign in again.'}), 401
             return redirect(url_for('login'))
         return f(*a, **kw)
     return w
