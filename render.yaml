@@ -9,4 +9,9 @@ services:
     plan: starter
     dockerfilePath: ./Dockerfile
     healthCheckPath: /health
+    envVars:
+      - key: KEEP_ALIVE_ENABLED
+        value: "true"
+      - key: KEEP_ALIVE_INTERVAL_MINUTES
+        value: "10"
     autoDeploy: true
