@@ -1,30 +1,34 @@
 # -*- coding: utf-8 -*-
 """
-DBByte REST storage adapter.
-Persistent bot objects are private and namespaced by user + bot. Firebase remains
-in use only for Authentication and Firestore application records.
+Backblaze B2 S3-compatible storage adapter.
+Firebase remains in use only for Authentication and Firestore application records.
 
-Sync rules: dependency/cache folders (.packages, node_modules, __pycache__ ...)
-are never uploaded - they are rebuilt from requirements.txt / package.json on
-start. Uploads run in parallel over a shared HTTP session.
+Bot files and runtime/session data are stored as private objects under:
+  scripts/<hashed-user-id>/<script-id>/<relative-path>
+
+Uses AWS Signature Version 4 through boto3. Dependency/cache folders are
+excluded because they are rebuilt from requirements.txt / package.json.
 """
 import os
 import time
-import base64
 import hashlib
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import quote
-import requests
 
-BASE_URL = os.environ.get("DBBYTE_API_URL", "https://api.dbbyte.com").rstrip("/")
-API_KEY = os.environ.get("DBBYTE_API_KEY", "").strip()
-BUCKET = os.environ.get("DBBYTE_BUCKET", "cyber-bot-storage").strip()
-TIMEOUT = (10, 90)
+import boto3
+from botocore.config import Config
+from botocore.exceptions import BotoCoreError, ClientError
+
 MAX_OBJECT_BYTES = 50 * 1024 * 1024
-MAX_REMOTE_NAME = 240
-UPLOAD_WORKERS = max(1, min(12, int(os.environ.get("DBBYTE_UPLOAD_WORKERS", "6"))))
-USAGE_CACHE_SECONDS = 8
+UPLOAD_WORKERS = max(1, min(8, int(os.environ.get("B2_UPLOAD_WORKERS", "4"))))
+USAGE_CACHE_SECONDS = 15
+
+ENDPOINT = os.environ.get("B2_ENDPOINT", "https://s3.us-east-005.backblazeb2.com").strip().rstrip("/")
+REGION = os.environ.get("B2_REGION", "us-east-005").strip()
+BUCKET = os.environ.get("B2_BUCKET_NAME", "Myfreehosting").strip()
+KEY_ID = os.environ.get("B2_KEY_ID", "").strip()
+APPLICATION_KEY = os.environ.get("B2_APPLICATION_KEY", "").strip()
 
 EXCLUDE_DIRS = {
     ".packages", "node_modules", "__pycache__", ".git", "__MACOSX",
@@ -33,81 +37,96 @@ EXCLUDE_DIRS = {
 EXCLUDE_FILES = {".DS_Store", "Thumbs.db"}
 
 _SYNC_CACHE = {}
-_SESSION = requests.Session()
+_CLIENT = None
+_CLIENT_LOCK = threading.Lock()
 _USAGE_LOCK = threading.Lock()
 _USAGE_CACHE = {"at": 0.0, "data": None}
-
-# Last human-readable upload failure; shown to the user by the upload routes.
 LAST_ERROR = ""
 
 
-class DBByteError(RuntimeError):
+class BackblazeError(RuntimeError):
     pass
 
 
 def _ready():
-    if not API_KEY:
-        raise DBByteError("DBBYTE_API_KEY is missing in Render Environment.")
+    missing = []
+    if not KEY_ID:
+        missing.append("B2_KEY_ID")
+    if not APPLICATION_KEY:
+        missing.append("B2_APPLICATION_KEY")
     if not BUCKET:
-        raise DBByteError("DBBYTE_BUCKET is missing in Render Environment.")
+        missing.append("B2_BUCKET_NAME")
+    if not ENDPOINT:
+        missing.append("B2_ENDPOINT")
+    if not REGION:
+        missing.append("B2_REGION")
+    if missing:
+        raise BackblazeError("Missing Render environment variable(s): " + ", ".join(missing))
 
 
-def _headers():
+def _client():
+    global _CLIENT
     _ready()
-    return {"Authorization": f"Bearer {API_KEY}"}
+    if _CLIENT is None:
+        with _CLIENT_LOCK:
+            if _CLIENT is None:
+                _CLIENT = boto3.client(
+                    "s3",
+                    endpoint_url=ENDPOINT,
+                    aws_access_key_id=KEY_ID,
+                    aws_secret_access_key=APPLICATION_KEY,
+                    region_name=REGION,
+                    config=Config(
+                        signature_version="s3v4",
+                        s3={"addressing_style": "path"},
+                        retries={"max_attempts": 3, "mode": "standard"},
+                        connect_timeout=10,
+                        read_timeout=90,
+                    ),
+                )
+    return _CLIENT
 
 
-def _url(path):
-    return f"{BASE_URL}{path}"
-
-
-def _request(method, path, **kwargs):
-    try:
-        response = _SESSION.request(method, _url(path), headers=_headers(), timeout=TIMEOUT, **kwargs)
-    except requests.RequestException as exc:
-        raise DBByteError(f"DBByte connection failed: {exc}") from exc
-    if not response.ok:
-        try:
-            detail = response.json().get("error") or response.json().get("message") or response.text
-        except Exception:
-            detail = response.text
-        raise DBByteError(f"DBByte HTTP {response.status_code}: {str(detail)[:350]}")
-    return response
+def _error_text(exc):
+    if isinstance(exc, ClientError):
+        detail = exc.response.get("Error", {})
+        code = detail.get("Code", "ClientError")
+        message = detail.get("Message", str(exc))
+        if code in ("AccessDenied", "AccessDeniedByObjectLockConfiguration", "InvalidRequest"):
+            return (
+                f"Backblaze B2 {code}: {message}. Check the application key permissions "
+                "and bucket Object Lock retention/legal-hold settings."
+            )
+        return f"Backblaze B2 {code}: {message}"
+    return f"Backblaze B2 connection failed: {exc}"
 
 
 def _uid_tag(user_id):
-    return hashlib.sha256(str(user_id).encode("utf-8")).hexdigest()[:12]
+    return hashlib.sha256(str(user_id).encode("utf-8")).hexdigest()[:16]
 
 
-def _remote_name(user_id, script_id, relative_path):
-    encoded = base64.urlsafe_b64encode(relative_path.replace("\\", "/").encode("utf-8")).decode("ascii").rstrip("=")
-    return f"scripts--{_uid_tag(user_id)}--{script_id}--{encoded}"
+def _prefix(user_id, script_id):
+    return f"scripts/{_uid_tag(user_id)}/{str(script_id)}/"
 
 
-def _decode_relative(remote_name):
-    parts = remote_name.split("--", 3)
-    if len(parts) != 4 or parts[0] != "scripts":
-        return None
-    encoded = parts[3]
-    try:
-        encoded += "=" * (-len(encoded) % 4)
-        rel = base64.urlsafe_b64decode(encoded.encode("ascii")).decode("utf-8")
-        rel = rel.replace("\\", "/").lstrip("/")
-        if not rel or any(p in ("", ".", "..") for p in rel.split("/")):
-            return None
-        return rel
-    except Exception:
-        return None
+def _object_key(user_id, script_id, relative_path):
+    rel = str(relative_path).replace("\\", "/").lstrip("/")
+    parts = rel.split("/")
+    if not rel or any(part in ("", ".", "..") for part in parts):
+        raise BackblazeError("Invalid bot file path.")
+    return _prefix(user_id, script_id) + rel
 
 
 def _excluded_rel(rel):
-    return any(p in EXCLUDE_DIRS for p in rel.split("/")[:-1])
+    return any(part in EXCLUDE_DIRS for part in rel.split("/")[:-1])
 
 
 def _iter_local_files(local_dir):
-    """Yield (absolute_path, relative_posix_path) for every syncable file."""
-    for root, dirs, filenames in os.walk(local_dir):
-        dirs[:] = [d for d in dirs if d not in EXCLUDE_DIRS and not os.path.islink(os.path.join(root, d))]
+    for root, dirs, filenames in os.walk(local_dir, followlinks=False):
+        dirs[:] = [
+            d for d in dirs
+            if d not in EXCLUDE_DIRS and not os.path.islink(os.path.join(root, d))
+        ]
         for filename in filenames:
             if filename in EXCLUDE_FILES or filename.endswith(".pyc"):
                 continue
@@ -117,42 +136,33 @@ def _iter_local_files(local_dir):
             yield path, os.path.relpath(path, local_dir).replace("\\", "/")
 
 
-def _list_all():
-    files, cursor = [], None
-    while True:
-        params = {"limit": 1000}
-        if cursor:
-            params["cursor"] = cursor
-        data = _request("GET", f"/storage/{quote(BUCKET, safe='')}/list", params=params).json()
-        files.extend(data.get("files") or [])
-        if not data.get("hasMore") or not data.get("nextCursor"):
-            break
-        cursor = data["nextCursor"]
-    return files
+def _iter_current_objects(prefix):
+    client = _client()
+    paginator = client.get_paginator("list_objects_v2")
+    for page in paginator.paginate(Bucket=BUCKET, Prefix=prefix):
+        for item in page.get("Contents", []):
+            yield item
 
 
 def upload_script_file(local_path, user_id, script_id, filename):
     global LAST_ERROR
     try:
-        relative = str(filename).replace("\\", "/")
-        remote_name = _remote_name(user_id, script_id, relative)
-        if len(remote_name) > MAX_REMOTE_NAME:
-            raise DBByteError(f"Path too long for storage: {relative[:80]}... Shorten folder/file names.")
+        key = _object_key(user_id, script_id, filename)
         size = os.path.getsize(local_path)
         if size > MAX_OBJECT_BYTES:
-            raise DBByteError(f"{filename} exceeds DBByte's 50 MB per-file upload limit.")
+            raise BackblazeError(f"{filename} exceeds the configured 50 MB per-file safety limit.")
+        client = _client()
         with open(local_path, "rb") as handle:
-            response = _request(
-                "POST", f"/storage/{quote(BUCKET, safe='')}/upload",
-                params={"overwrite": "true"},
-                files={"file": (remote_name, handle, "application/octet-stream")},
+            client.upload_fileobj(
+                handle, BUCKET, key,
+                ExtraArgs={"ContentType": "application/octet-stream"},
             )
         stat = os.stat(local_path)
-        _SYNC_CACHE[(str(user_id), str(script_id), relative)] = (stat.st_size, stat.st_mtime_ns)
-        return response.json().get("key") or remote_name
+        _SYNC_CACHE[(str(user_id), str(script_id), str(filename))] = (stat.st_size, stat.st_mtime_ns)
+        return key
     except Exception as exc:
-        LAST_ERROR = str(exc)
-        print(f"[DBBYTE] Upload failed for {script_id}/{filename}: {exc}", flush=True)
+        LAST_ERROR = _error_text(exc)
+        print(f"[BACKBLAZE] Upload failed for {script_id}/{filename}: {LAST_ERROR}", flush=True)
         return None
 
 
@@ -162,166 +172,195 @@ def upload_script_folder(local_dir, user_id, script_id):
     if not items:
         return uploaded
     with ThreadPoolExecutor(max_workers=UPLOAD_WORKERS) as pool:
-        results = pool.map(lambda it: (it[1], upload_script_file(it[0], user_id, script_id, it[1])), items)
-        for rel, remote in results:
+        results = pool.map(
+            lambda item: (item[1], upload_script_file(item[0], user_id, script_id, item[1])),
+            items,
+        )
+        for relative, remote in results:
             if remote:
-                uploaded[rel] = remote
+                uploaded[relative] = remote
     return uploaded
 
 
+def _delete_key_all_versions(key):
+    """Permanently remove every version and delete marker for one object key."""
+    client = _client()
+    paginator = client.get_paginator("list_object_versions")
+    entries = []
+    for page in paginator.paginate(Bucket=BUCKET, Prefix=key):
+        for field in ("Versions", "DeleteMarkers"):
+            for item in page.get(field, []):
+                if item.get("Key") == key:
+                    entries.append({"Key": key, "VersionId": item["VersionId"]})
+    for offset in range(0, len(entries), 1000):
+        client.delete_objects(
+            Bucket=BUCKET,
+            Delete={"Objects": entries[offset:offset + 1000], "Quiet": True},
+        )
+    return len(entries)
+
+
 def sync_script_folder(local_dir, user_id, script_id, prune=False):
-    """Upload only new/changed files (in parallel); optionally prune stale remote objects."""
+    """Upload changed files and optionally remove stale remote file versions."""
     global LAST_ERROR
     if not os.path.isdir(local_dir):
+        LAST_ERROR = f"Local bot folder is missing: {local_dir}"
         return False
     LAST_ERROR = ""
     expected = {}
-    for path, rel in _iter_local_files(local_dir):
+    for path, relative in _iter_local_files(local_dir):
         stat = os.stat(path)
-        expected[rel] = (path, (stat.st_size, stat.st_mtime_ns))
+        expected[relative] = (path, (stat.st_size, stat.st_mtime_ns))
 
     uid, sid = str(user_id), str(script_id)
-    pending = [(path, rel) for rel, (path, sig) in expected.items()
-               if _SYNC_CACHE.get((uid, sid, rel)) != sig]
+    pending = [
+        (path, relative) for relative, (path, signature) in expected.items()
+        if _SYNC_CACHE.get((uid, sid, relative)) != signature
+    ]
     ok = True
     if pending:
         with ThreadPoolExecutor(max_workers=UPLOAD_WORKERS) as pool:
-            results = list(pool.map(lambda it: upload_script_file(it[0], user_id, script_id, it[1]), pending))
+            results = list(pool.map(
+                lambda item: upload_script_file(item[0], user_id, script_id, item[1]),
+                pending,
+            ))
         ok = all(results)
 
-    # Prune only during explicit full syncs, not on the runner's periodic sync loop.
-    if prune or os.environ.get("DBBYTE_PRUNE_ON_SYNC", "false").lower() == "true":
+    if prune and ok:
         try:
-            prefix = f"scripts--{_uid_tag(user_id)}--{script_id}--"
-            remote = [f for f in _list_all() if str(f.get("name", "")).startswith(prefix)]
-            for item in remote:
-                rel = _decode_relative(str(item.get("name", "")))
-                if rel and (rel not in expected or _excluded_rel(rel)):
-                    _delete_remote_name(str(item["name"]))
-                    _SYNC_CACHE.pop((uid, sid, rel), None)
+            prefix = _prefix(user_id, script_id)
+            stale_keys = set()
+            for item in _iter_current_objects(prefix):
+                key = str(item.get("Key", ""))
+                relative = key[len(prefix):] if key.startswith(prefix) else ""
+                if relative and (relative not in expected or _excluded_rel(relative)):
+                    stale_keys.add(key)
+            for key in stale_keys:
+                _delete_key_all_versions(key)
+                relative = key[len(prefix):]
+                _SYNC_CACHE.pop((uid, sid, relative), None)
         except Exception as exc:
-            print(f"[DBBYTE] Stale-file cleanup warning for {script_id}: {exc}", flush=True)
-            # Do not fail a successful upload because list/delete cleanup failed.
+            LAST_ERROR = _error_text(exc)
+            print(f"[BACKBLAZE] Stale-file cleanup warning for {script_id}: {LAST_ERROR}", flush=True)
     return ok
 
 
 def download_script_folder(user_id, script_id, dest_dir):
     try:
-        prefix = f"scripts--{_uid_tag(user_id)}--{script_id}--"
-        objects = [f for f in _list_all() if str(f.get("name", "")).startswith(prefix)]
-        if not objects:
-            return False
+        prefix = _prefix(user_id, script_id)
         dest_abs = os.path.abspath(dest_dir)
         count = 0
-        for item in objects:
-            remote_name = str(item.get("name", ""))
-            rel = _decode_relative(remote_name)
-            if not rel or _excluded_rel(rel):
-                continue  # skip legacy dependency folders uploaded by older versions
-            response = _request(
-                "GET",
-                f"/storage/{quote(BUCKET, safe='')}/download/{quote(remote_name, safe='')}",
-                stream=True,
-            )
-            target = os.path.abspath(os.path.join(dest_dir, *rel.split("/")))
+        for item in _iter_current_objects(prefix):
+            key = str(item.get("Key", ""))
+            relative = key[len(prefix):] if key.startswith(prefix) else ""
+            if not relative or _excluded_rel(relative):
+                continue
+            target = os.path.abspath(os.path.join(dest_dir, *relative.split("/")))
             if not target.startswith(dest_abs + os.sep):
                 continue
             os.makedirs(os.path.dirname(target), exist_ok=True)
-            with open(target, "wb") as out:
-                for chunk in response.iter_content(1024 * 256):
-                    if chunk:
-                        out.write(chunk)
+            response = _client().get_object(Bucket=BUCKET, Key=key)
+            with response["Body"] as body, open(target, "wb") as output:
+                while True:
+                    chunk = body.read(256 * 1024)
+                    if not chunk:
+                        break
+                    output.write(chunk)
             stat = os.stat(target)
-            _SYNC_CACHE[(str(user_id), str(script_id), rel)] = (stat.st_size, stat.st_mtime_ns)
+            _SYNC_CACHE[(str(user_id), str(script_id), relative)] = (stat.st_size, stat.st_mtime_ns)
             count += 1
-        print(f"[DBBYTE] Downloaded {count} files for bot {script_id}", flush=True)
+        print(f"[BACKBLAZE] Restored {count} files for bot {script_id}", flush=True)
         return count > 0
     except Exception as exc:
-        print(f"[DBBYTE] Download failed for {script_id}: {exc}", flush=True)
+        print(f"[BACKBLAZE] Restore failed for {script_id}: {_error_text(exc)}", flush=True)
         return False
 
 
-def _delete_remote_name(name):
-    _request(
-        "DELETE",
-        f"/storage/{quote(BUCKET, safe='')}/delete/{quote(name, safe='')}",
-        params={"version": "all"},
-    )
-
-
 def delete_script_folder(user_id, script_id):
+    """Delete every object version belonging to a bot and verify the prefix is empty."""
     try:
-        prefix = f"scripts--{_uid_tag(user_id)}--{script_id}--"
-        objects = [f for f in _list_all() if str(f.get("name", "")).startswith(prefix)]
-        for item in objects:
-            _delete_remote_name(str(item["name"]))
-        remaining = [f for f in _list_all() if str(f.get("name", "")).startswith(prefix)]
+        prefix = _prefix(user_id, script_id)
+        client = _client()
+        paginator = client.get_paginator("list_object_versions")
+        entries = []
+        for page in paginator.paginate(Bucket=BUCKET, Prefix=prefix):
+            for field in ("Versions", "DeleteMarkers"):
+                for item in page.get(field, []):
+                    entries.append({"Key": item["Key"], "VersionId": item["VersionId"]})
+        for offset in range(0, len(entries), 1000):
+            client.delete_objects(
+                Bucket=BUCKET,
+                Delete={"Objects": entries[offset:offset + 1000], "Quiet": True},
+            )
+        remaining = False
+        for page in paginator.paginate(Bucket=BUCKET, Prefix=prefix):
+            if page.get("Versions") or page.get("DeleteMarkers"):
+                remaining = True
+                break
         if remaining:
-            raise DBByteError(f"{len(remaining)} DBByte object(s) remain after delete.")
-        for key in list(_SYNC_CACHE):
-            if key[0] == str(user_id) and key[1] == str(script_id):
-                _SYNC_CACHE.pop(key, None)
-        print(f"[DBBYTE] Deleted {len(objects)} objects for bot {script_id}", flush=True)
+            raise BackblazeError("Some object versions remain after delete; check Object Lock retention/legal hold.")
+        for cache_key in list(_SYNC_CACHE):
+            if cache_key[0] == str(user_id) and cache_key[1] == str(script_id):
+                _SYNC_CACHE.pop(cache_key, None)
+        print(f"[BACKBLAZE] Deleted {len(entries)} object versions for bot {script_id}", flush=True)
         return True
     except Exception as exc:
-        print(f"[DBBYTE] Delete failed for {user_id}/{script_id}: {exc}", flush=True)
+        global LAST_ERROR
+        LAST_ERROR = _error_text(exc)
+        print(f"[BACKBLAZE] Delete failed for {user_id}/{script_id}: {LAST_ERROR}", flush=True)
         return False
 
 
 def read_script_file(user_id, script_id, filename):
     try:
-        remote_name = _remote_name(user_id, script_id, filename)
-        response = _request(
-            "GET",
-            f"/storage/{quote(BUCKET, safe='')}/download/{quote(remote_name, safe='')}",
-        )
-        return response.content
+        key = _object_key(user_id, script_id, filename)
+        response = _client().get_object(Bucket=BUCKET, Key=key)
+        return response["Body"].read()
     except Exception as exc:
-        print(f"[DBBYTE] Remote read failed for {script_id}/{filename}: {exc}", flush=True)
+        print(f"[BACKBLAZE] Remote read failed for {script_id}/{filename}: {_error_text(exc)}", flush=True)
         return None
 
 
 def upload_qr_image(local_path, filename):
-    # QR images remain available through the existing local/static upload path.
-    # Private DBByte objects intentionally are not exposed as permanent public URLs.
+    # Payment QR files intentionally remain on the existing static upload path.
     return None
 
 
 def _measure_storage_usage():
-    quota_gb = max(0.1, float(os.environ.get("DBBYTE_QUOTA_GB", "20")))
+    try:
+        quota_gb = max(0.1, float(os.environ.get("B2_QUOTA_GB", "10")))
+    except (TypeError, ValueError):
+        quota_gb = 10.0
     quota_bytes = int(quota_gb * 1024 ** 3)
     result = {
         "configured": False, "available": False, "used_bytes": 0,
         "file_count": 0, "quota_bytes": quota_bytes, "free_bytes": quota_bytes,
-        "used_percent": 0, "bucket": BUCKET, "provider": "DBByte",
-        "quota_source": "DBBYTE_QUOTA_GB environment setting (default 20 GB)",
+        "used_percent": 0, "bucket": BUCKET, "provider": "Backblaze B2",
+        "quota_source": "B2_QUOTA_GB environment setting (display estimate, not provider billing telemetry)",
     }
     try:
-        _ready()
-        health = _request("GET", "/health").json()
-        # Count every object in this bucket, not only this app's scripts prefix.
-        objects = _list_all()
+        client = _client()
+        client.head_bucket(Bucket=BUCKET)
         used = 0
-        for item in objects:
-            size = item.get("size_bytes", item.get("size", item.get("bytes", 0)))
-            try:
-                used += int(size or 0)
-            except (TypeError, ValueError):
-                pass
+        count = 0
+        paginator = client.get_paginator("list_object_versions")
+        for page in paginator.paginate(Bucket=BUCKET):
+            for item in page.get("Versions", []):
+                used += int(item.get("Size", 0) or 0)
+                count += 1
         result.update({
             "configured": True, "available": True,
-            "api_status": health.get("status", "unknown"),
-            "used_bytes": used, "file_count": len(objects),
+            "used_bytes": used, "file_count": count,
             "free_bytes": max(0, quota_bytes - used),
             "used_percent": min(100.0, round((used / quota_bytes) * 100, 3)) if quota_bytes else 0,
         })
     except Exception as exc:
-        result["error"] = str(exc)
+        result["error"] = _error_text(exc)
     return result
 
 
 def get_storage_usage():
-    """Measured bucket usage, cached briefly so the live monitor cannot hammer DBByte."""
+    """Measured bucket usage; cached briefly to avoid frequent full bucket scans."""
     with _USAGE_LOCK:
         now = time.time()
         if _USAGE_CACHE["data"] is not None and now - _USAGE_CACHE["at"] < USAGE_CACHE_SECONDS:
