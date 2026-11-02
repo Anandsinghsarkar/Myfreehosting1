@@ -562,7 +562,7 @@ def api_stop(sid):
     ok, msg = runner.stop_script(sid)
     # A process may have exited on its own; that is not a reason to leave stale
     # Render files behind. A sync failure is different and must preserve files.
-    if not ok and msg != "Not running" and "local files were kept" in msg:
+    if not ok and msg != "Not running":
         return jsonify({'ok': False, 'message': msg}), 502
     try:
         # Also sync files if the bot had already exited before Stop was clicked.
