@@ -48,12 +48,11 @@ DBByte's current REST API has a 50 MB per-object upload limit. The website's nor
 
 ## Bot deployment features
 
-- ZIP upload accepts a project containing a top-level `main.py`, `bot.py`, `app.py`, `server.py`, or `run.py` (or a JavaScript entry file). Include `requirements.txt` for Python dependencies or `package.json` for Node dependencies.
 - Python requirements are installed with pip into that bot's local `.packages` directory before launch. Node dependencies are installed with `npm install`. Install output and startup errors are written to the bot log.
 - The Create Bot page also supports pasting Python source, optional requirements, and environment variables as a JSON object.
 - Approved Python bots can be edited from My Bots. Saving updates the DBByte copy; if the bot was running, the app restarts it.
 - Bot logs refresh in the existing Live Log panel. Process exit codes are recorded and status changes to Stopped or Failed.
-- ZIP safety limits: 500 entries, 100 MB expanded size, no symlinks or path traversal. Upload size remains limited by the app's existing 20 MB request limit.
+- Direct file upload supports `.py` and `.js` scripts only (20 MB maximum). ZIP upload and automatic archive extraction are disabled.
 
 ### Important execution isolation note
 
