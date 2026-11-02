@@ -99,21 +99,22 @@
       #serviceMonitor .storage-value{font-size:22px;font-weight:850;letter-spacing:-.6px;margin-top:6px}
     </style>
     <div class="storage-3d" style="margin-bottom:12px;">
-      <div style="font-size:12px;color:var(--text-dim);margin-bottom:8px;">Render temporary bot files · only this app's working files</div>
+      <div style="font-size:12px;color:var(--text-dim);margin-bottom:8px;">🖥️ Render App Storage · 512 MB configured allowance</div>
       <div class="storage-meter"><div id="renderStorageBar"></div></div>
       <div class="stats-row" style="margin-top:10px;">
-        <div class="stat-card storage-3d"><div class="label">Temporary used</div><div class="storage-value" id="renderUsed">—</div></div>
-        <div class="stat-card storage-3d"><div class="label">Runtime status</div><div class="storage-value" id="renderTotal">—</div></div>
-        <div class="stat-card storage-3d"><div class="label">Container quota</div><div class="storage-value" id="renderFree">Not exposed</div></div>
+        <div class="stat-card storage-3d"><div class="label">Used</div><div class="storage-value" id="renderUsed">—</div></div>
+        <div class="stat-card storage-3d"><div class="label">Total capacity</div><div class="storage-value" id="renderTotal">512 MB</div></div>
+        <div class="stat-card storage-3d"><div class="label">Free space</div><div class="storage-value" id="renderFree">—</div></div>
       </div>
     </div>
     <div class="storage-3d">
-      <b>☁️ DBByte Bot Storage</b>
-      <div class="muted small" style="margin-top:5px;">Actual object bytes and file count for this hosting app in your private DBByte bucket.</div>
-      <div class="stats-row" style="margin-top:10px;">
-        <div class="stat-card storage-3d"><div class="label">Cloud used</div><div class="storage-value" id="firebaseUsed">—</div></div>
-        <div class="stat-card storage-3d"><div class="label">Cloud files</div><div class="storage-value" id="firebaseFiles">—</div></div>
-        <div class="stat-card storage-3d"><div class="label">Quota</div><div class="storage-value" id="firebaseQuota">Not exposed</div></div>
+      <b>☁️ DBByte Cloud Storage · 20 GB</b>
+      <div class="muted small" style="margin-top:5px;">Live bucket usage: actual object bytes and file count, with the configured 20 GB allowance.</div>
+      <div class="storage-meter" style="margin-top:12px;"><div id="firebaseStorageBar"></div></div>
+       <div class="stats-row" style="margin-top:10px;">
+        <div class="stat-card storage-3d"><div class="label">Used</div><div class="storage-value" id="firebaseUsed">—</div></div>
+        <div class="stat-card storage-3d"><div class="label">Files</div><div class="storage-value" id="firebaseFiles">—</div></div>
+        <div class="stat-card storage-3d"><div class="label">Free space / Total</div><div class="storage-value" id="firebaseQuota">Not exposed</div></div>
       </div>
       <div class="muted small" id="firebaseDiagnostic" style="margin-top:10px;overflow-wrap:anywhere;">Checking bucket…</div>
     </div>
@@ -141,25 +142,33 @@ async function refreshServiceMonitor() {
         const d=await r.json();
         if(!d.ok) throw new Error(d.error||'Could not load storage');
         const s=d.render||{};
-        document.getElementById('renderUsed').textContent=fmtBytes(s.used_bytes);
-        document.getElementById('renderTotal').textContent=s.used_bytes===0?'No temporary files':'Temporary runtime';
-        document.getElementById('renderFree').textContent='Not exposed';
-        document.getElementById('renderStorageBar').style.width=s.used_bytes>0?'100%':'0%';
+        const renderFailed=!!s.error;
+        const renderTotal=Number(s.total_bytes||0), renderUsed=Number(s.used_bytes||0);
+        document.getElementById('renderUsed').textContent=renderFailed?'Read failed':fmtBytes(renderUsed);
+        document.getElementById('renderTotal').textContent=renderTotal?fmtBytes(renderTotal):'512 MB*';
+        document.getElementById('renderFree').textContent=renderFailed?'Unavailable':fmtBytes(s.free_bytes);
+        document.getElementById('renderStorageBar').style.width=renderFailed?'0%':Math.min(100,Number(s.used_percent||0))+'%';
         const f=d.dbbyte||{};
         const cloudReadFailed=!!f.error || !f.available;
-        document.getElementById('firebaseUsed').textContent=cloudReadFailed?'Read failed':(f.configured?fmtBytes(f.used_bytes):'Not configured');
-        document.getElementById('firebaseFiles').textContent=cloudReadFailed?'Unavailable':(f.configured?(f.file_count+' files'):'—');
-        document.getElementById('firebaseQuota').textContent=cloudReadFailed?'Bucket unavailable':'Not exposed';
+        document.getElementById('firebaseUsed').textContent=cloudReadFailed?'Read failed':fmtBytes(f.used_bytes);
+        document.getElementById('firebaseFiles').textContent=cloudReadFailed?'Unavailable':(Number(f.file_count||0)+' files');
+        document.getElementById('firebaseQuota').textContent=cloudReadFailed?'Unavailable':fmtBytes(f.free_bytes)+' free / '+fmtBytes(f.quota_bytes);
+        document.getElementById('firebaseQuota').title=cloudReadFailed?(f.error||'DBByte unavailable'):'Configured allowance: '+fmtBytes(f.quota_bytes);
+        document.getElementById('firebaseUsed').title='Measured from DBByte bucket object listing';
+        const cloudBar=document.getElementById('firebaseStorageBar');
+        if(cloudBar) cloudBar.style.width=cloudReadFailed?'0%':Math.min(100,Number(f.used_percent||0))+'%';
         const diagnostic=document.getElementById('firebaseDiagnostic');
-        diagnostic.textContent='Provider: DBByte · Bucket: '+(f.bucket||'not configured')+(f.error?' · '+f.error:'');
+        diagnostic.textContent='DBByte · Bucket: '+(f.bucket||'not configured')+' · '+(cloudReadFailed?(f.error||'Connection unavailable'):'Live bucket listing');
         diagnostic.title=f.error||'DBByte storage status';
-        document.getElementById('storageUpdated').textContent='Updated: '+new Date().toLocaleTimeString();
+        document.getElementById('storageUpdated').textContent='Live · Last checked: '+new Date().toLocaleTimeString()+' · Auto-refresh every 5 seconds';
     } catch(e) {
         document.getElementById('storageUpdated').textContent='Storage check failed: '+e.message;
     }
 }
 refreshServiceMonitor();
 checkPing();
+setInterval(refreshServiceMonitor, 5000);
+setInterval(checkPing, 30000);
 </script>
 
 <!-- ============================================ -->
