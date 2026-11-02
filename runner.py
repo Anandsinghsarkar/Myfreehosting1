@@ -271,8 +271,10 @@ def start_script(script_id, user_id, file_path, file_type, env_vars=None):
             log_file.write(f"[SYSTEM] ✅ Installed '{missing}'. Retrying...\n")
             log_file.flush()
     except Exception as e:
-        log_file.write(f"[SYSTEM] Precheck error: {e}\n")
+        log_file.write(f"[SYSTEM] Dependency/precheck failed: {e}\n")
         log_file.flush()
+        log_file.close()
+        return False, str(e)
 
     try:
         kwargs = {}
