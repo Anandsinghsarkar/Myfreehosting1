@@ -124,7 +124,29 @@ def index():
 
 @app.route('/health')
 def health():
-    return jsonify({'status': 'ok'})
+    # Lightweight endpoint for Render health checks and the 10-minute GitHub ping.
+    response = jsonify({'status': 'ok', 'service': 'myfreehosting1',
+                        'timestamp': datetime.utcnow().isoformat()})
+    response.headers['Cache-Control'] = 'no-store'
+    return response
+
+
+@app.route('/api/admin/storage')
+@admin_required
+def api_admin_storage():
+    """Return actual Render filesystem usage plus mirrored Firebase bot-file usage."""
+    try:
+        usage = shutil.disk_usage(UPLOAD_DIR)
+        render_storage = {
+            'total_bytes': usage.total,
+            'used_bytes': usage.used,
+            'free_bytes': usage.free,
+            'used_percent': round((usage.used / usage.total) * 100, 2) if usage.total else 0,
+        }
+        cloud_storage = storage_helper.get_storage_usage()
+        return jsonify({'ok': True, 'render': render_storage, 'firebase': cloud_storage})
+    except Exception as exc:
+        return jsonify({'ok': False, 'error': str(exc)}), 500
 
 
 @app.route('/login')
@@ -504,16 +526,25 @@ def api_logs(sid):
 def api_delete(sid):
     user = current_user()
     s, err = _get_script_for_user(sid, user)
-    if err: return jsonify({'ok': False}), err[1]
+    if err: return jsonify({'ok': False, 'error': err[0]}), err[1]
+
+    # Stop the process first, then remove its local folder and cloud mirror.
     runner.stop_script(sid)
-    # Delete cloud copies immediately when this script was mirrored to Firebase.
-    # If cloud deletion fails, keep its database record so the operation can be retried.
-    if s.get('storage_path') and not storage_helper.delete_script_folder(s['user_id'], sid):
-        return jsonify({'ok': False, 'error': 'Firebase Storage delete failed. Check bucket permissions and retry.'}), 502
-    sdir = runner.get_script_dir(s['user_id'], sid)
-    shutil.rmtree(sdir, ignore_errors=True)
-    db.delete_script(sid)
-    return jsonify({'ok': True})
+    if s.get('storage_path'):
+        if not storage_helper.delete_script_folder(s['user_id'], sid):
+            return jsonify({'ok': False, 'error': 'Cloud files could not be fully deleted. Database entry was kept so you can retry.'}), 502
+
+    sdir = os.path.join(UPLOAD_DIR, str(s['user_id']), str(sid))
+    try:
+        if os.path.isdir(sdir):
+            shutil.rmtree(sdir)
+        if os.path.exists(sdir):
+            return jsonify({'ok': False, 'error': 'Local bot folder still exists; deletion was not completed.'}), 500
+        # Remove the Firestore script document only after file cleanup succeeds.
+        db.delete_script(sid)
+        return jsonify({'ok': True, 'message': 'Bot record and files deleted.'})
+    except Exception as exc:
+        return jsonify({'ok': False, 'error': f'Cleanup failed: {exc}'}), 500
 
 
 # ========== ADMIN: Review Queue ==========
