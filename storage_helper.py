@@ -247,20 +247,34 @@ def upload_qr_image(local_path, filename):
 
 
 def get_storage_usage():
-    """Return real bytes and object count for this app's bot objects in DBByte."""
+    """Return measured bucket object usage plus the configured free-plan allowance."""
+    quota_gb = max(0.1, float(os.environ.get("DBBYTE_QUOTA_GB", "20")))
+    quota_bytes = int(quota_gb * 1024 ** 3)
     result = {
         "configured": False, "available": False, "used_bytes": 0,
-        "file_count": 0, "bucket": BUCKET, "provider": "DBByte",
+        "file_count": 0, "quota_bytes": quota_bytes, "free_bytes": quota_bytes,
+        "used_percent": 0, "bucket": BUCKET, "provider": "DBByte",
+        "quota_source": "DBBYTE_QUOTA_GB environment setting (default 20 GB)",
     }
     try:
         _ready()
         health = _request("GET", "/health").json()
-        objects = [f for f in _list_all() if str(f.get("name", "")).startswith("scripts--")]
-        result["configured"] = True
-        result["available"] = True
-        result["api_status"] = health.get("status", "unknown")
-        result["used_bytes"] = sum(int(f.get("size") or 0) for f in objects)
-        result["file_count"] = len(objects)
+        # Count every object in this bucket, not only this app's scripts prefix.
+        objects = _list_all()
+        used = 0
+        for item in objects:
+            size = item.get("size_bytes", item.get("size", item.get("bytes", 0)))
+            try:
+                used += int(size or 0)
+            except (TypeError, ValueError):
+                pass
+        result.update({
+            "configured": True, "available": True,
+            "api_status": health.get("status", "unknown"),
+            "used_bytes": used, "file_count": len(objects),
+            "free_bytes": max(0, quota_bytes - used),
+            "used_percent": min(100.0, round((used / quota_bytes) * 100, 3)) if quota_bytes else 0,
+        })
     except Exception as exc:
         result["error"] = str(exc)
     return result
