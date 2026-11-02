@@ -396,7 +396,7 @@ def _handle_single(f, user, sid, sdir, filename, ext):
     with open(local_path, 'wb') as out:
         out.write(content)
 
-    # Store every initial file (main source + requirements) in Firebase.
+    # Store every initial file (main source + requirements) in DBByte.
     synced = storage_helper.sync_script_folder(sdir, user['uid'], sid)
     storage_path = f"scripts/{user['uid']}/{sid}/" if synced else ''
     if not synced:
@@ -507,7 +507,7 @@ def _handle_zip(f, user, sid, sdir):
             ("Uploaded! Admin approval ka wait karo." if initial_status == 'pending' else "Uploaded & approved!")
         )
         if not started:
-            # Keep uploaded files in Firebase; no idle bot source folder on Render.
+            # Keep uploaded files in DBByte; no idle bot source folder on Render.
             storage_helper.sync_script_folder(sdir, user['uid'], sid)
             shutil.rmtree(sdir, ignore_errors=True)
         return jsonify({'ok': True, 'sid': sid, 'status': script.get('status', initial_status),
@@ -566,7 +566,7 @@ def api_stop(sid):
         return jsonify({'ok': False, 'message': msg}), 502
     try:
         # Also sync files if the bot had already exited before Stop was clicked.
-        if os.path.isdir(sdir) and not storage_helper.sync_script_folder(sdir, s['user_id'], sid):
+        if os.path.isdir(sdir) and not storage_helper.sync_script_folder(sdir, s['user_id'], sid, prune=True):
             return jsonify({'ok': False, 'error': 'Bot stopped, but DBByte sync failed. Temporary files were kept for safety.'}), 502
         shutil.rmtree(sdir, ignore_errors=False) if os.path.isdir(sdir) else None
         db.update_script(sid, {'running': False, 'status': 'stopped'})
@@ -959,7 +959,7 @@ def admin_update_pricing():
             qr_path = os.path.join(qr_dir, qr_name)
             qr_file.save(qr_path)
             local_qr_url = url_for('static', filename=f'uploads/payment_qr/{qr_name}')
-            # Mirror QR to Firebase when available, but keep local upload working if not.
+            # Keep payment QR available from the app's static uploads path.
             cloud_qr_url = storage_helper.upload_qr_image(qr_path, qr_name)
             data['qr_code_url'] = cloud_qr_url or local_qr_url
 
