@@ -1,6 +1,6 @@
 # REAL_NAME: app.py
 # -*- coding: utf-8 -*-
-import os, sys, re, zipfile, tempfile, shutil, subprocess, uuid, secrets, hashlib, threading, time, urllib.request
+import os, sys, re, json, zipfile, tempfile, shutil, subprocess, uuid, secrets, hashlib, threading, time, urllib.request
 import requests
 from functools import wraps
 from datetime import datetime, timedelta
@@ -335,6 +335,109 @@ def create_bot():
                            fb_config=FIREBASE_WEB_CONFIG)
 
 
+
+
+@app.route('/create-code', methods=['POST'])
+@login_required
+def create_code():
+    user = current_user()
+    if db.count_scripts(user['uid']) >= user.get('file_limit', 2):
+        return jsonify({'ok': False, 'error': 'File limit reached'}), 400
+    data = request.get_json(silent=True) or {}
+    code = str(data.get('code', ''))
+    name = secure_filename(str(data.get('name', 'bot.py')))
+    if not name.endswith('.py'):
+        name = (os.path.splitext(name)[0] or 'bot') + '.py'
+    if not code.strip():
+        return jsonify({'ok': False, 'error': 'Code is empty'}), 400
+    if len(code.encode('utf-8')) > MAX_FILE_SIZE:
+        return jsonify({'ok': False, 'error': 'Code exceeds 20 MB'}), 400
+    sid = str(uuid.uuid4())[:12]
+    sdir = runner.get_script_dir(user['uid'], sid)
+    os.makedirs(sdir, exist_ok=True)
+    with open(os.path.join(sdir, name), 'w', encoding='utf-8') as out:
+        out.write(code)
+    requirements = str(data.get('requirements', ''))
+    if len(requirements.encode('utf-8')) > 20000:
+        shutil.rmtree(sdir, ignore_errors=True)
+        return jsonify({'ok': False, 'error': 'requirements.txt max 20 KB'}), 400
+    if requirements.strip():
+        with open(os.path.join(sdir, 'requirements.txt'), 'w', encoding='utf-8') as out:
+            out.write(requirements)
+    env_vars = data.get('env_vars') or {}
+    if not isinstance(env_vars, dict):
+        return jsonify({'ok': False, 'error': 'Environment variables must be key/value JSON'}), 400
+    env_vars = {str(k): str(v) for k, v in env_vars.items() if re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]{0,127}', str(k))}
+    if not storage_helper.sync_script_folder(sdir, user['uid'], sid):
+        shutil.rmtree(sdir, ignore_errors=True)
+        return jsonify({'ok': False, 'error': 'DBByte upload failed; check DBByte credentials.'}), 502
+    settings = db.get_settings()
+    status = 'approved' if user.get('is_admin') or settings.get('auto_approve') else 'pending'
+    db.add_script(sid, user['uid'], name, 'py', f"scripts/{user['uid']}/{sid}/", status=status)
+    db.update_script(sid, {'env_vars': env_vars})
+    started, message = (False, 'Approval required')
+    if status == 'approved':
+        started, message = _start_uploaded_script(sid, user, sdir, name, 'py')
+    if not started:
+        storage_helper.sync_script_folder(sdir, user['uid'], sid)
+        shutil.rmtree(sdir, ignore_errors=True)
+    return jsonify({'ok': True, 'sid': sid, 'status': status, 'started': started, 'message': message})
+
+
+@app.route('/edit-bot/<sid>', methods=['GET', 'POST'])
+@login_required
+def edit_bot(sid):
+    user = current_user()
+    script, err = _get_script_for_user(sid, user)
+    if err:
+        abort(err[1])
+    if request.method == 'POST':
+        if script.get('status') not in ('approved', 'running', 'stopped', 'failed'):
+            return jsonify({'ok': False, 'error': 'Bot must be approved before editing.'}), 400
+        data = request.get_json(silent=True) or {}
+        rel = script.get('name', '')
+        if not rel.endswith('.py') or '/' in rel or '\\\\' in rel:
+            return jsonify({'ok': False, 'error': 'Only a main Python file can be edited here.'}), 400
+        source = str(data.get('code', ''))
+        if not source.strip() or len(source.encode('utf-8')) > MAX_FILE_SIZE:
+            return jsonify({'ok': False, 'error': 'Code empty or exceeds 20 MB.'}), 400
+        was_running = runner.is_running(sid)
+        if was_running:
+            ok, msg = runner.stop_script(sid)
+            if not ok:
+                return jsonify({'ok': False, 'error': msg}), 502
+        sdir = runner.get_script_dir(script['user_id'], sid)
+        if not os.path.isfile(os.path.join(sdir, rel)):
+            if not storage_helper.download_script_folder(script['user_id'], sid, sdir):
+                return jsonify({'ok': False, 'error': 'Could not restore source from DBByte.'}), 502
+        with open(os.path.join(sdir, rel), 'w', encoding='utf-8') as out:
+            out.write(source)
+        env_vars = data.get('env_vars') or {}
+        if not isinstance(env_vars, dict):
+            return jsonify({'ok': False, 'error': 'Environment variables must be JSON object.'}), 400
+        env_vars = {str(k): str(v) for k, v in env_vars.items() if re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]{0,127}', str(k))}
+        if not storage_helper.sync_script_folder(sdir, script['user_id'], sid):
+            return jsonify({'ok': False, 'error': 'DBByte save failed; local copy kept.'}), 502
+        db.update_script(sid, {'env_vars': env_vars, 'updated_at': datetime.utcnow().isoformat()})
+        if was_running:
+            ok, msg = runner.start_script(sid, script['user_id'], os.path.join(sdir, rel), 'py', env_vars=env_vars)
+            db.update_script(sid, {'running': bool(ok), 'status': 'running' if ok else 'failed'})
+            return jsonify({'ok': ok, 'message': 'Saved and redeployed.' if ok else msg})
+        shutil.rmtree(sdir, ignore_errors=True)
+        return jsonify({'ok': True, 'message': 'Saved. Start the bot to deploy the updated code.'})
+    sdir = runner.get_script_dir(script['user_id'], sid)
+    if not os.path.isfile(os.path.join(sdir, script['name'])):
+        storage_helper.download_script_folder(script['user_id'], sid, sdir)
+    try:
+        with open(os.path.join(sdir, script['name']), 'r', encoding='utf-8', errors='ignore') as fh:
+            code = fh.read()
+    except Exception:
+        code = ''
+    return render_template('edit_bot.html', user=user, script=script, code=code,
+                           env_json=json.dumps(script.get('env_vars') or {}, indent=2),
+                           fb_config=FIREBASE_WEB_CONFIG)
+
+
 @app.route('/upload', methods=['POST'])
 @login_required
 def upload():
@@ -384,7 +487,7 @@ def _start_uploaded_script(sid, user, sdir, filename, file_type):
     file_path = os.path.join(sdir, filename)
     if not os.path.isfile(file_path):
         return False, 'Main file missing'
-    ok, message = runner.start_script(sid, user['uid'], file_path, file_type)
+    ok, message = runner.start_script(sid, user['uid'], file_path, file_type, env_vars=(db.get_script(sid) or {}).get('env_vars', {}))
     if ok:
         db.update_script(sid, {'running': True, 'status': 'running', 'last_started_at': datetime.utcnow().isoformat()})
     else:
@@ -549,7 +652,7 @@ def api_start(sid):
     if not os.path.exists(fpath):
         return jsonify({'ok': False, 'error': 'File missing'}), 400
 
-    ok, msg = runner.start_script(sid, s['user_id'], fpath, s['type'])
+    ok, msg = runner.start_script(sid, s['user_id'], fpath, s['type'], env_vars=s.get('env_vars', {}))
     if ok:
         db.update_script(sid, {'running': True, 'status': 'running'})
     return jsonify({'ok': ok, 'message': msg})
