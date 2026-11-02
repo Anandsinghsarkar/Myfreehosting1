@@ -107,3 +107,23 @@ def upload_qr_image(local_path, filename):
     except Exception as e:
         print(f"❌ QR upload failed: {e}")
         return None
+
+
+def get_storage_usage():
+    """Measure actual bytes stored under scripts/ in the configured Firebase bucket."""
+    result = {'configured': False, 'used_bytes': 0, 'file_count': 0}
+    try:
+        bucket = get_bucket()
+        if not bucket:
+            return result
+        result['configured'] = True
+        total = 0
+        count = 0
+        for blob in bucket.list_blobs(prefix='scripts/'):
+            total += int(blob.size or 0)
+            count += 1
+        result['used_bytes'] = total
+        result['file_count'] = count
+    except Exception as exc:
+        result['error'] = str(exc)
+    return result
