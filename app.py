@@ -202,7 +202,7 @@ def api_admin_storage():
                 'used_percent': None,
                 'scope': 'This app temporary bot runtime files only'
             },
-            'firebase': cloud_storage
+            'dbbyte': cloud_storage
         })
     except Exception as exc:
         app.logger.exception("Storage monitor failed")
@@ -401,7 +401,7 @@ def _handle_single(f, user, sid, sdir, filename, ext):
     storage_path = f"scripts/{user['uid']}/{sid}/" if synced else ''
     if not synced:
         shutil.rmtree(sdir, ignore_errors=True)
-        return jsonify({'ok': False, 'error': 'Firebase upload failed. Bot was not saved; check Firebase Storage configuration and permissions.'}), 502
+        return jsonify({'ok': False, 'error': 'DBByte upload failed. Bot was not saved; check DBBYTE_API_KEY, DBBYTE_BUCKET and bucket permissions.'}), 502
 
     settings = db.get_settings()
     is_admin_upload = bool(user.get('is_admin'))
@@ -424,7 +424,7 @@ def _handle_single(f, user, sid, sdir, filename, ext):
         ("Uploaded! Admin approval ka wait karo." if initial_status == 'pending' else "Uploaded & approved!")
     )
     if not started:
-        # The durable copy is already in Firebase; keep Render free while stopped/pending.
+        # The durable copy is already in DBByte; keep Render free while stopped/pending.
         storage_helper.sync_script_folder(sdir, user['uid'], sid)
         shutil.rmtree(sdir, ignore_errors=True)
     return jsonify({'ok': True, 'sid': sid, 'status': script.get('status', initial_status),
@@ -471,10 +471,10 @@ def _handle_zip(f, user, sid, sdir):
             elif os.path.exists(dst): os.remove(dst)
             shutil.move(src, dst)
 
-        # Firebase is the persistent home for bot source, sessions and data.
+        # DBByte is the persistent home for bot source, sessions and data.
         if not storage_helper.sync_script_folder(sdir, user['uid'], sid):
             shutil.rmtree(sdir, ignore_errors=True)
-            return jsonify({'ok': False, 'error': 'ZIP files could not all be saved to Firebase. Upload cancelled; check Firebase Storage permissions.'}), 502
+            return jsonify({'ok': False, 'error': 'ZIP files could not all be saved to DBByte. Upload cancelled; check DBByte key permissions and 50 MB per-file limit.'}), 502
         uploaded_files = True  # sync_script_folder above verified the complete upload
 
         settings = db.get_settings()
@@ -567,10 +567,10 @@ def api_stop(sid):
     try:
         # Also sync files if the bot had already exited before Stop was clicked.
         if os.path.isdir(sdir) and not storage_helper.sync_script_folder(sdir, s['user_id'], sid):
-            return jsonify({'ok': False, 'error': 'Bot stopped, but Firebase sync failed. Temporary files were kept for safety.'}), 502
+            return jsonify({'ok': False, 'error': 'Bot stopped, but DBByte sync failed. Temporary files were kept for safety.'}), 502
         shutil.rmtree(sdir, ignore_errors=False) if os.path.isdir(sdir) else None
         db.update_script(sid, {'running': False, 'status': 'stopped'})
-        return jsonify({'ok': True, 'message': 'Stopped. Runtime files saved to Firebase and cleared from Render.'})
+        return jsonify({'ok': True, 'message': 'Stopped. Runtime files saved to DBByte and cleared from Render.'})
     except Exception as exc:
         app.logger.exception("Stop cleanup failed for %s", sid)
         return jsonify({'ok': False, 'error': f'Bot stopped, cleanup failed: {exc}'}), 500
@@ -620,16 +620,16 @@ def api_delete(sid):
     try:
         # Stop first. If the process is already gone, continue with orphan cleanup.
         runner.stop_script(sid)
-        # Always inspect/delete the Firebase prefix, even when the Firestore
+        # Always inspect/delete the DBByte prefix, even when the Firestore
         # storage_path field is blank or stale (older uploads often had this).
         if not storage_helper.delete_script_folder(s['user_id'], sid):
-            return jsonify({'ok': False, 'error': 'Firebase files could not be verified as deleted. Bot record was kept; retry after checking Firebase Storage permissions.'}), 502
+            return jsonify({'ok': False, 'error': 'DBByte files could not be verified as deleted. Bot record was kept; retry after checking DBByte API key and permissions.'}), 502
         if os.path.isdir(sdir):
             shutil.rmtree(sdir)
         if os.path.exists(sdir):
             return jsonify({'ok': False, 'error': 'Temporary Render folder still exists; Firestore record was kept.'}), 500
         db.delete_script(sid)
-        return jsonify({'ok': True, 'message': 'Bot, Firebase files and Render temporary files deleted.'})
+        return jsonify({'ok': True, 'message': 'Bot, DBByte files and Render temporary files deleted.'})
     except Exception as exc:
         app.logger.exception("Bot delete failed for %s", sid)
         return jsonify({'ok': False, 'error': f'Delete failed: {type(exc).__name__}: {exc}'}), 500
@@ -660,7 +660,7 @@ def admin_review_detail(sid):
     owner = db.get_user(s['user_id'])
     sdir = runner.get_script_dir(s['user_id'], sid)
 
-    # Load the review copy from Firebase only when an admin opens the review.
+    # Load the review copy from DBByte only when an admin opens the review.
     main_path = os.path.join(sdir, s['name'])
     if not os.path.isfile(main_path):
         storage_helper.download_script_folder(s['user_id'], sid, sdir)
@@ -844,7 +844,7 @@ def admin_delete_user(uid):
     for script in db.list_scripts(uid):
         runner.stop_script(script['id'])
         if not storage_helper.delete_script_folder(uid, script['id']):
-            flash(f"Firebase Storage delete failed for {script.get('name', script['id'])}; user not deleted. Check Storage permissions and retry.", "error")
+            flash(f"DBByte storage delete failed for {script.get('name', script['id'])}; user not deleted. Check Storage permissions and retry.", "error")
             return redirect(url_for('admin_dashboard'))
         shutil.rmtree(os.path.join(UPLOAD_DIR, str(uid), str(script['id'])), ignore_errors=True)
     shutil.rmtree(os.path.join(UPLOAD_DIR, str(uid)), ignore_errors=True)
@@ -1143,7 +1143,7 @@ def payment_history():
 
 
 def restore_running_scripts():
-    """Restore bots marked running from persistent Firebase Storage after Render restarts."""
+    """Restore bots marked running from persistent DBByte storage after Render restarts."""
     if os.environ.get('RESTORE_BOTS_ON_STARTUP', 'true').lower() != 'true':
         print('[RESTORE] Disabled by RESTORE_BOTS_ON_STARTUP', flush=True)
         return
