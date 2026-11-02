@@ -194,7 +194,7 @@ def _cleanup(script_id):
 
 
 def _sync_runtime_folder(script_id, user_id, script_dir, proc):
-    """Persist bot-created session/database files to DBByte while the process runs."""
+    """Persist bot-created session/database files to Backblaze B2 while the process runs."""
     import time
     while proc.poll() is None:
         time.sleep(60)
@@ -203,9 +203,9 @@ def _sync_runtime_folder(script_id, user_id, script_dir, proc):
         try:
             from storage_helper import sync_script_folder
             if not sync_script_folder(script_dir, user_id, script_id):
-                print(f"[DBBYTE] Runtime sync incomplete for bot {script_id}", flush=True)
+                print(f"[BACKBLAZE] Runtime sync incomplete for bot {script_id}", flush=True)
         except Exception as exc:
-            print(f"[DBBYTE] Runtime sync error for bot {script_id}: {exc}", flush=True)
+            print(f"[BACKBLAZE] Runtime sync error for bot {script_id}: {exc}", flush=True)
 
 
 def start_script(script_id, user_id, file_path, file_type, env_vars=None):
@@ -300,7 +300,7 @@ def start_script(script_id, user_id, file_path, file_type, env_vars=None):
         threading.Thread(
             target=_sync_runtime_folder,
             args=(script_id, user_id, script_dir, proc),
-            name=f"dbbyte-sync-{script_id}",
+            name=f"backblaze-sync-{script_id}",
             daemon=True,
         ).start()
         threading.Thread(target=_watch_exit, args=(script_id, proc), name=f"bot-watch-{script_id}", daemon=True).start()
@@ -363,7 +363,7 @@ def stop_script(script_id):
         from storage_helper import sync_script_folder
         sync_ok = sync_script_folder(os.path.dirname(info['log_file'].name), info.get('user_id'), script_id, prune=True)
         if not sync_ok:
-            sync_error = "DBByte sync was incomplete"
+            sync_error = "Backblaze B2 sync was incomplete"
     except Exception as exc:
         sync_ok = False
         sync_error = str(exc)
