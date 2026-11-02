@@ -355,6 +355,45 @@ def create_bot():
 
 
 
+def _queue_bot_deploy(sid, user_id, sdir, file_path=None, file_type=None, env_vars=None):
+    """
+    Keep upload requests short: the source is written to Render first, then
+    approved bots are started in the background, and only afterwards copied
+    to DBByte. Pending bots are backed up after the local upload so they
+    survive a Render restart while waiting for approval.
+    """
+    def _work():
+        try:
+            if file_path:
+                ok, message = runner.start_script(
+                    sid, user_id, file_path, file_type, env_vars=env_vars or {}
+                )
+                db.update_script(sid, {
+                    'running': bool(ok),
+                    'status': 'running' if ok else 'approved',
+                    'last_started_at': datetime.utcnow().isoformat() if ok else None,
+                    'last_start_error': '' if ok else str(message)[:500],
+                })
+                print(f"[DEPLOY] Bot {sid}: {'started' if ok else 'start failed'}: {message}", flush=True)
+
+            # Do not make the browser upload request wait for DBByte/network I/O.
+            if os.path.isdir(sdir):
+                synced = storage_helper.sync_script_folder(sdir, user_id, sid)
+                if synced:
+                    db.update_script(sid, {
+                        'storage_path': f"scripts/{user_id}/{sid}/",
+                        'storage_synced_at': datetime.utcnow().isoformat(),
+                    })
+                    print(f"[DBBYTE] Initial backup completed for bot {sid}", flush=True)
+                else:
+                    print(f"[DBBYTE] Initial backup FAILED for bot {sid}: {storage_helper.LAST_ERROR}", flush=True)
+        except Exception as exc:
+            print(f"[DEPLOY] Background deploy/backup failed for {sid}: {type(exc).__name__}: {exc}", flush=True)
+
+    thread = threading.Thread(target=_work, name=f"bot-deploy-{sid}", daemon=True)
+    thread.start()
+
+
 @app.route('/create-code', methods=['POST'])
 @login_required
 def create_code():
@@ -387,20 +426,20 @@ def create_code():
         shutil.rmtree(sdir, ignore_errors=True)
         return jsonify({'ok': False, 'error': 'Environment variables must be key/value JSON'}), 400
     env_vars = {str(k): str(v) for k, v in env_vars.items() if re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]{0,127}', str(k))}
-    if not storage_helper.sync_script_folder(sdir, user['uid'], sid):
-        shutil.rmtree(sdir, ignore_errors=True)
-        return jsonify({'ok': False, 'error': 'DBByte upload failed: ' + (storage_helper.LAST_ERROR or 'check DBByte credentials.')}), 502
     settings = db.get_settings()
     status = 'approved' if user.get('is_admin') or settings.get('auto_approve') else 'pending'
     db.add_script(sid, user['uid'], name, 'py', f"scripts/{user['uid']}/{sid}/", status=status)
     db.update_script(sid, {'env_vars': env_vars})
-    started, message = (False, 'Approval required')
-    if status == 'approved':
-        started, message = _start_uploaded_script(sid, user, sdir, name, 'py')
-    if not started:
-        storage_helper.sync_script_folder(sdir, user['uid'], sid)
-        shutil.rmtree(sdir, ignore_errors=True)
-    return jsonify({'ok': True, 'sid': sid, 'status': status, 'started': started, 'message': message})
+    # Source is already on the Render filesystem. Start approved code away
+    # from the HTTP request, then back it up to DBByte in the same worker.
+    _queue_bot_deploy(
+        sid, user['uid'], sdir,
+        file_path=os.path.join(sdir, name) if status == 'approved' else None,
+        file_type='py',
+        env_vars=env_vars,
+    )
+    message = 'Upload saved on server. Deployment and DBByte backup queued.' if status == 'approved' else 'Uploaded on server. Admin approval pending; DBByte backup queued.'
+    return jsonify({'ok': True, 'sid': sid, 'status': status, 'started': False, 'queued': True, 'message': message})
 
 
 @app.route('/edit-bot/<sid>', methods=['GET', 'POST'])
@@ -555,22 +594,26 @@ def _handle_single(f, user, sid, sdir, filename, ext, env_vars):
     with open(local_path, 'wb') as out:
         out.write(content)
 
-    # Store every initial file (main source + requirements) in DBByte.
-    synced = storage_helper.sync_script_folder(sdir, user['uid'], sid)
-    storage_path = f"scripts/{user['uid']}/{sid}/" if synced else ''
-    if not synced:
-        return _upload_failure(sdir, 'DBByte upload failed: ' + (storage_helper.LAST_ERROR or 'check DBBYTE_API_KEY, DBBYTE_BUCKET and bucket permissions.'), 502)
-
+    # Save to the Render runtime first. DBByte is the persistent backup,
+    # not a prerequisite for accepting the upload or launching the bot.
     settings = db.get_settings()
     is_admin_upload = bool(user.get('is_admin'))
     initial_status = 'approved' if (is_admin_upload or settings.get('auto_approve')) else 'pending'
+    storage_path = f"scripts/{user['uid']}/{sid}/"
     db.add_script(sid, user['uid'], filename, ext[1:], storage_path, status=initial_status)
     db.update_script(sid, {'env_vars': env_vars})
 
+    # Preserve existing behavior: admin uploads auto-start; auto-approved
+    # non-admin uploads are approved and can be started from My Bots.
+    should_start = is_admin_upload
+    _queue_bot_deploy(
+        sid, user['uid'], sdir,
+        file_path=local_path if should_start else None,
+        file_type=ext[1:],
+        env_vars=env_vars,
+    )
     started = False
-    start_message = ''
-    if is_admin_upload:
-        started, start_message = _start_uploaded_script(sid, user, sdir, filename, ext[1:])
+    start_message = 'Deployment queued in background.' if should_start else 'Saved on server; start from My Bots after approval.'
     script = db.get_script(sid) or {}
     notify_telegram_event('New file upload', {'User': user.get('name', user.get('email', user['uid'])), 'Email': user.get('email', ''), 'File': filename, 'Type': ext[1:], 'Status': script.get('status', initial_status), 'Started': started, 'Script ID': sid})
     try:
@@ -578,16 +621,15 @@ def _handle_single(f, user, sid, sdir, filename, ext, env_vars):
         telegram_admin.send_upload_notice(sys.modules[__name__], sid, '📥 NEW FILE UPLOAD', {'User': user.get('name', user.get('email', user['uid'])), 'Email': user.get('email', ''), 'File': filename, 'Status': script.get('status', initial_status), 'Script ID': sid}, [local_path])
     except Exception as exc:
         print(f'[TELEGRAM] Upload review notice failed: {exc}', flush=True)
-    msg = "Admin upload approved and started." if started else (
-        f"Admin upload approved; start failed: {start_message}" if is_admin_upload else
-        ("Uploaded! Admin approval ka wait karo." if initial_status == 'pending' else "Uploaded & approved!")
+    msg = (
+        "Upload received on Render. Bot start and DBByte backup are running in background."
+        if should_start else
+        ("Uploaded on Render. Admin approval pending; DBByte backup queued."
+         if initial_status == 'pending' else
+         "Uploaded on Render and approved. Start it from My Bots; DBByte backup queued.")
     )
-    if not started:
-        # The durable copy is already in DBByte; keep Render free while stopped/pending.
-        storage_helper.sync_script_folder(sdir, user['uid'], sid)
-        shutil.rmtree(sdir, ignore_errors=True)
     return jsonify({'ok': True, 'sid': sid, 'status': script.get('status', initial_status),
-                    'started': started, 'message': msg})
+                    'started': False, 'queued': True, 'message': msg})
 
 
 # ========== API: Start / Stop / Restart / Logs / Delete ==========
