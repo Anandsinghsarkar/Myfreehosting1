@@ -304,16 +304,22 @@ def stop_script(script_id):
         pass
     except Exception as e:
         return False, f"Error stopping: {e}"
-    finally:
+    sync_ok = True
+    sync_error = ""
+    try:
         # Upload the final session/database/log changes before app.py clears the
         # temporary Render working directory.
-        try:
-            from storage_helper import sync_script_folder
-            if not sync_script_folder(os.path.dirname(info['log_file'].name), info.get('user_id'), script_id):
-                return False, "Bot stopped, but Firebase sync was incomplete; local files were kept."
-        except Exception as exc:
-            return False, f"Bot stopped, Firebase sync failed; local files were kept: {exc}"
+        from storage_helper import sync_script_folder
+        sync_ok = sync_script_folder(os.path.dirname(info['log_file'].name), info.get('user_id'), script_id)
+        if not sync_ok:
+            sync_error = "Firebase sync was incomplete"
+    except Exception as exc:
+        sync_ok = False
+        sync_error = str(exc)
+    finally:
         _cleanup(script_id)
+    if not sync_ok:
+        return False, f"Bot stopped, but local files were kept: {sync_error}"
     return True, "Stopped"
 
 
