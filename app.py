@@ -1,6 +1,6 @@
 # REAL_NAME: app.py
 # -*- coding: utf-8 -*-
-import os, sys, re, zipfile, tempfile, shutil, subprocess, uuid, secrets, hashlib
+import os, sys, re, zipfile, tempfile, shutil, subprocess, uuid, secrets, hashlib, threading, time, urllib.request
 import requests
 from functools import wraps
 from datetime import datetime, timedelta
@@ -124,13 +124,58 @@ def index():
 
 @app.route('/health')
 def health():
-    # Lightweight endpoint for Render health checks and the 10-minute GitHub ping.
+    # Lightweight endpoint for Render health checks and keep-alive requests.
     response = jsonify({'status': 'ok', 'service': 'myfreehosting1',
                         'timestamp': datetime.utcnow().isoformat()})
     response.headers['Cache-Control'] = 'no-store'
     return response
 
 
+def _keep_alive_interval_minutes():
+    """Use a safe interval below Render Free's idle timeout."""
+    try:
+        return max(5, min(14, int(os.environ.get('KEEP_ALIVE_INTERVAL_MINUTES', '10'))))
+    except (TypeError, ValueError):
+        return 10
+
+
+def _keep_alive_base_url():
+    """Prefer an explicit URL; otherwise use Render's automatically supplied URL."""
+    if os.environ.get('KEEP_ALIVE_ENABLED', 'true').strip().lower() in ('0', 'false', 'no', 'off'):
+        return None
+    base = (os.environ.get('KEEP_ALIVE_URL') or os.environ.get('RENDER_EXTERNAL_URL') or '').strip().rstrip('/')
+    if not base.startswith(('https://', 'http://')):
+        return None
+    return base
+
+
+def _keep_alive_loop():
+    base = _keep_alive_base_url()
+    if not base:
+        print('[KEEPALIVE] Disabled: no valid KEEP_ALIVE_URL or RENDER_EXTERNAL_URL.', flush=True)
+        return
+    interval = _keep_alive_interval_minutes() * 60
+    target = base + '/health?source=internal-keepalive'
+    print(f'[KEEPALIVE] Started; target={target}; interval={interval // 60} minutes', flush=True)
+    # Give Gunicorn/Flask time to finish binding the HTTP port after startup.
+    time.sleep(60)
+    while True:
+        try:
+            req = urllib.request.Request(target, headers={'User-Agent': 'MyFreeHosting-KeepAlive/1.0', 'Cache-Control': 'no-cache'})
+            with urllib.request.urlopen(req, timeout=20) as response:
+                response.read(128)
+                print(f'[KEEPALIVE] Ping OK: HTTP {response.status}', flush=True)
+        except Exception as exc:
+            print(f'[KEEPALIVE] Ping failed: {type(exc).__name__}: {exc}', flush=True)
+        time.sleep(interval)
+
+
+def _start_keep_alive():
+    if _keep_alive_base_url():
+        thread = threading.Thread(target=_keep_alive_loop, name='keep-alive', daemon=True)
+        thread.start()
+    else:
+        print('[KEEPALIVE] Not started. Check KEEP_ALIVE_ENABLED and Render external URL.', flush=True)
 @app.route('/api/admin/storage')
 @admin_required
 def api_admin_storage():
@@ -1090,6 +1135,9 @@ def restore_running_scripts():
             print(f'[RESTORE] Error for {sid}: {exc}', flush=True)
     print(f'[RESTORE] Finished. Restarted {restored} bot(s).', flush=True)
 
+
+# Start the in-process keep-alive loop (same approach as the Hoster project), then restore bots.
+_start_keep_alive()
 
 # Restore bots when the Render web service process starts. Use one Gunicorn worker to avoid duplicate bot processes.
 restore_running_scripts()
