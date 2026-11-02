@@ -192,15 +192,20 @@ def api_admin_storage():
                             local_used += os.path.getsize(path)
                     except OSError:
                         pass
+        render_quota_mb = max(1, float(os.environ.get('RENDER_APP_STORAGE_QUOTA_MB', '512')))
+        render_quota_bytes = int(render_quota_mb * 1024 * 1024)
+        render_used = local_used
+        render_free = max(0, render_quota_bytes - render_used)
         cloud_storage = storage_helper.get_storage_usage()
         return jsonify({
             'ok': True,
             'render': {
-                'used_bytes': local_used,
-                'total_bytes': None,
-                'free_bytes': None,
-                'used_percent': None,
-                'scope': 'This app temporary bot runtime files only'
+                'used_bytes': render_used,
+                'total_bytes': render_quota_bytes,
+                'free_bytes': render_free,
+                'used_percent': min(100.0, round((render_used / render_quota_bytes) * 100, 3)),
+                'quota_mb': render_quota_mb,
+                'scope': 'Application upload/temp files only; configured app quota, not provider-wide disk telemetry'
             },
             'dbbyte': cloud_storage
         })
