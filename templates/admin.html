@@ -78,6 +78,78 @@
 </div>
 
 <!-- ============================================ -->
+<!-- LIVE SERVICE + STORAGE MONITOR               -->
+<!-- ============================================ -->
+<div class="card mb-3" id="serviceMonitor">
+    <div class="card-header">
+        <h3>🛰️ Service & Storage Monitor</h3>
+        <button class="btn btn-ghost btn-xs" type="button" onclick="refreshServiceMonitor()">↻ Refresh</button>
+    </div>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:14px;">
+        <a class="btn btn-cyan btn-sm" href="{{ url_for('health', _external=True) }}" target="_blank" rel="noopener">Open Ping /health ↗</a>
+        <button class="btn btn-primary btn-sm" type="button" onclick="checkPing()">Check Now</button>
+        <span id="pingStatus" class="muted small">Not checked yet</span>
+    </div>
+    <div style="font-size:12px;color:var(--text-dim);margin-bottom:8px;">Render container filesystem (actual total / used / free)</div>
+    <div style="height:12px;border-radius:99px;background:var(--bg-2);overflow:hidden;border:1px solid var(--border);">
+        <div id="renderStorageBar" style="height:100%;width:0%;background:linear-gradient(90deg,var(--cyan),var(--primary-hi));transition:width .5s;"></div>
+    </div>
+    <div class="stats-row" style="margin-top:10px;">
+        <div class="stat-card"><div class="stat-body"><div class="label">Total</div><div class="value" id="renderTotal">—</div></div></div>
+        <div class="stat-card"><div class="stat-body"><div class="label">Used</div><div class="value" id="renderUsed">—</div></div></div>
+        <div class="stat-card"><div class="stat-body"><div class="label">Free</div><div class="value" id="renderFree">—</div></div></div>
+    </div>
+    <div style="margin-top:14px;padding:12px;border:1px solid var(--border);border-radius:10px;background:var(--bg-2);">
+        <b>☁️ Firebase Bot Files</b>
+        <div class="muted small" style="margin-top:5px;">Actual size of objects stored under scripts/ in the configured Firebase Storage bucket.</div>
+        <div style="display:flex;gap:18px;flex-wrap:wrap;margin-top:10px;font-size:13px;">
+            <span>Used: <b id="firebaseUsed">—</b></span>
+            <span>Files: <b id="firebaseFiles">—</b></span>
+            <span>Total / free quota: <b id="firebaseQuota">Not exposed by Firebase bucket API</b></span>
+        </div>
+    </div>
+    <div class="muted small" id="storageUpdated" style="margin-top:8px;"></div>
+</div>
+<script>
+function fmtBytes(n) {
+    if (n === null || n === undefined) return '—';
+    const units=['B','KB','MB','GB','TB']; let v=Number(n), i=0;
+    while(v>=1024 && i<units.length-1){v/=1024;i++;}
+    return v.toFixed(i===0?0:2)+' '+units[i];
+}
+async function checkPing() {
+    const el=document.getElementById('pingStatus');
+    el.textContent='Checking…';
+    try {
+        const r=await fetch('{{ url_for("health") }}?check='+Date.now(),{cache:'no-store'});
+        const d=await r.json();
+        el.textContent=r.ok && d.status==='ok' ? '🟢 Online · '+new Date().toLocaleTimeString() : '🔴 Unhealthy';
+    } catch(e) { el.textContent='🔴 Offline / unreachable'; }
+}
+async function refreshServiceMonitor() {
+    try {
+        const r=await fetch('{{ url_for("api_admin_storage") }}',{cache:'no-store'});
+        const d=await r.json();
+        if(!d.ok) throw new Error(d.error||'Could not load storage');
+        const s=d.render;
+        document.getElementById('renderTotal').textContent=fmtBytes(s.total_bytes);
+        document.getElementById('renderUsed').textContent=fmtBytes(s.used_bytes)+' ('+s.used_percent+'%)';
+        document.getElementById('renderFree').textContent=fmtBytes(s.free_bytes);
+        document.getElementById('renderStorageBar').style.width=Math.min(100,s.used_percent)+'%';
+        const f=d.firebase||{};
+        document.getElementById('firebaseUsed').textContent=f.configured?fmtBytes(f.used_bytes):'Not configured';
+        document.getElementById('firebaseFiles').textContent=f.configured?(f.file_count+' files'):'—';
+        document.getElementById('firebaseQuota').textContent=f.error?'Read error':(f.configured?'Quota not exposed by Firebase bucket API':'Not configured');
+        document.getElementById('storageUpdated').textContent='Updated: '+new Date().toLocaleTimeString();
+    } catch(e) {
+        document.getElementById('storageUpdated').textContent='Storage check failed: '+e.message;
+    }
+}
+refreshServiceMonitor();
+checkPing();
+</script>
+
+<!-- ============================================ -->
 <!-- USERS LIST                                    -->
 <!-- ============================================ -->
 <div class="card mb-3">
