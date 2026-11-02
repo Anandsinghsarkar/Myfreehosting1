@@ -145,9 +145,10 @@ async function refreshServiceMonitor() {
         document.getElementById('renderFree').textContent='Not exposed';
         document.getElementById('renderStorageBar').style.width=s.used_bytes>0?'100%':'0%';
         const f=d.firebase||{};
-        document.getElementById('firebaseUsed').textContent=f.configured?fmtBytes(f.used_bytes):'Not configured';
-        document.getElementById('firebaseFiles').textContent=f.configured?(f.file_count+' files'):'—';
-        document.getElementById('firebaseQuota').textContent=f.error?'Error: '+f.error.slice(0,90):(f.configured?'Not exposed':'Not configured');
+        const cloudReadFailed=!!f.error;
+        document.getElementById('firebaseUsed').textContent=cloudReadFailed?'Read failed':(f.configured?fmtBytes(f.used_bytes):'Not configured');
+        document.getElementById('firebaseFiles').textContent=cloudReadFailed?'Unavailable':(f.configured?(f.file_count+' files'):'—');
+        document.getElementById('firebaseQuota').textContent=cloudReadFailed?('Bucket error: '+f.error.slice(0,90)):(f.configured?'Not exposed':'Not configured');
         document.getElementById('storageUpdated').textContent='Updated: '+new Date().toLocaleTimeString();
     } catch(e) {
         document.getElementById('storageUpdated').textContent='Storage check failed: '+e.message;
