@@ -44,3 +44,17 @@ DBByte's current REST API has a 50 MB per-object upload limit. The website's nor
 - `DBBYTE_QUOTA_GB`: displayed DBByte allowance in GiB; defaults to `20`. The used bytes and object count are read from the bucket listing; the quota is a configured allowance and is not independently verified against DBByte billing.
 - `RENDER_APP_STORAGE_QUOTA_MB`: app-managed upload/temp-file allowance shown in the Render card; defaults to `512`. The used value counts files under the application's upload directory, not every byte used by the Render host/container.
 - The admin storage monitor refreshes automatically every 5 seconds.
+
+
+## Bot deployment features
+
+- ZIP upload accepts a project containing a top-level `main.py`, `bot.py`, `app.py`, `server.py`, or `run.py` (or a JavaScript entry file). Include `requirements.txt` for Python dependencies or `package.json` for Node dependencies.
+- Python requirements are installed with pip into that bot's local `.packages` directory before launch. Node dependencies are installed with `npm install`. Install output and startup errors are written to the bot log.
+- The Create Bot page also supports pasting Python source, optional requirements, and environment variables as a JSON object.
+- Approved Python bots can be edited from My Bots. Saving updates the DBByte copy; if the bot was running, the app restarts it.
+- Bot logs refresh in the existing Live Log panel. Process exit codes are recorded and status changes to Stopped or Failed.
+- ZIP safety limits: 500 entries, 100 MB expanded size, no symlinks or path traversal. Upload size remains limited by the app's existing 20 MB request limit.
+
+### Important execution isolation note
+
+Render runs these bot processes on the same service/container as the website. This implementation does not provide a hardened per-customer OS/container sandbox. Keep user uploads behind admin approval, only run code you trust, and do not enable automatic approval for untrusted users. Do not put platform-wide secrets in a bot's environment; only supply credentials intended for that bot. Resource-heavy dependencies may exceed the available memory/disk.
