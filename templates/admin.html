@@ -3,242 +3,97 @@
 {% block title %}Admin Panel{% endblock %}
 
 {% block content %}
-<h1 class="page-title">👑 Admin Panel</h1>
+<h1 class="page-title"><svg class="ic ic-lg"><use href="#i-shield"/></svg>Admin panel</h1>
+<p class="page-sub">Users, bots, storage and service health at a glance.</p>
 
-<!-- ============================================ -->
-<!-- QUICK ACTIONS: Review Queue + Terminal       -->
-<!-- ============================================ -->
 {% if pending_count and pending_count > 0 %}
-<div class="card" style="background: linear-gradient(135deg, rgba(251,191,36,0.15), rgba(251,146,60,0.1));
-     border: 1px solid rgba(251,191,36,0.4); margin-bottom: 14px;">
+<div class="card" style="background: rgba(242,184,75,0.08); border: 1px solid rgba(242,184,75,0.35);">
     <div class="row-between">
         <div style="flex:1; min-width:0;">
-            <div style="font-size: 12px; color: var(--gold); font-weight: 700; letter-spacing: 0.5px;">
-                ⏳ PENDING REVIEWS
-            </div>
-            <div style="font-size: 22px; font-weight: 800; margin-top: 4px; color: var(--text);">
-                {{ pending_count }} file(s) waiting for approval
-            </div>
+            <div style="font-size: 11px; color: var(--gold); font-weight: 700; letter-spacing: 0.8px;">PENDING REVIEWS</div>
+            <div style="font-size: 20px; font-weight: 800; margin-top: 4px;">{{ pending_count }} file(s) waiting for approval</div>
         </div>
-        <a href="{{ url_for('admin_review_queue') }}" class="btn btn-primary">
-            🔍 Review Now →
-        </a>
+        <a href="{{ url_for('admin_review_queue') }}" class="btn btn-primary">Review now</a>
     </div>
 </div>
 {% endif %}
 
-<div class="card" style="margin-bottom: 14px;">
-    <div class="row-between">
-        <div style="flex:1; min-width:0;">
-            <div style="font-size: 12px; color: var(--cyan-hi); font-weight: 700; letter-spacing: 0.5px;">
-                💻 TERMINAL
-            </div>
-            <div class="muted small" style="margin-top: 4px;">
-                Server pe direct commands chalao — pip install, debugging, logs, etc.
-            </div>
-        </div>
-        <a href="{{ url_for('admin_terminal_page') }}" class="btn btn-cyan">
-            Open Terminal →
-        </a>
-    </div>
-</div>
-
-<!-- ============================================ -->
-<!-- STATS ROW                                     -->
-<!-- ============================================ -->
+<!-- STATS -->
 <div class="stats-row">
     <div class="stat-card">
-        <div class="stat-icon purple">👥</div>
-        <div class="stat-body">
-            <div class="label">Users</div>
-            <div class="value">{{ users|length }}</div>
-        </div>
+        <div class="stat-icon purple"><svg class="ic"><use href="#i-users"/></svg></div>
+        <div class="stat-body"><div class="label">Users</div><div class="value">{{ users|length }}</div></div>
     </div>
     <div class="stat-card">
-        <div class="stat-icon cyan">🤖</div>
-        <div class="stat-body">
-            <div class="label">Bots</div>
-            <div class="value">{{ scripts|length }}</div>
-        </div>
+        <div class="stat-icon cyan"><svg class="ic"><use href="#i-bot"/></svg></div>
+        <div class="stat-body"><div class="label">Bots</div><div class="value">{{ scripts|length }}</div></div>
     </div>
     <div class="stat-card">
-        <div class="stat-icon green">🟢</div>
-        <div class="stat-body">
-            <div class="label">Running</div>
-            <div class="value">{{ running_count }}</div>
-        </div>
+        <div class="stat-icon green"><svg class="ic"><use href="#i-activity"/></svg></div>
+        <div class="stat-body"><div class="label">Running</div><div class="value">{{ running_count }}</div></div>
     </div>
     <div class="stat-card">
-        <div class="stat-icon gold">⏳</div>
-        <div class="stat-body">
-            <div class="label">Pending</div>
-            <div class="value">{{ pending_count }}</div>
-        </div>
+        <div class="stat-icon gold"><svg class="ic"><use href="#i-clock"/></svg></div>
+        <div class="stat-body"><div class="label">Pending</div><div class="value">{{ pending_count }}</div></div>
     </div>
 </div>
 
-<!-- ============================================ -->
-<!-- LIVE SERVICE + STORAGE MONITOR               -->
-<!-- ============================================ -->
-<div class="card mb-3" id="serviceMonitor">
-    <div class="card-header">
-        <h3>🛰️ Service & Storage Monitor</h3>
-        <button class="btn btn-ghost btn-xs" type="button" onclick="refreshServiceMonitor()">↻ Refresh</button>
-    </div>
-    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:14px;">
-        <a class="btn btn-cyan btn-sm" href="{{ url_for('health', _external=True) }}" target="_blank" rel="noopener">Open Ping /health ↗</a>
-        <button class="btn btn-primary btn-sm" type="button" onclick="checkPing()">Check Now</button>
-        <span id="pingStatus" class="muted small">Not checked yet</span>
-    </div>
-    <style>
-      #serviceMonitor{perspective:1000px;background:linear-gradient(145deg,rgba(18,24,43,.98),rgba(9,13,27,.98));box-shadow:0 18px 45px rgba(0,0,0,.28),inset 0 1px 0 rgba(255,255,255,.04)}
-      #serviceMonitor .storage-3d{border:1px solid var(--border);border-radius:16px;padding:14px;background:linear-gradient(145deg,rgba(31,41,66,.62),rgba(13,18,34,.92));box-shadow:0 12px 24px rgba(0,0,0,.22),inset 0 1px 0 rgba(255,255,255,.06);transform:translateZ(0);transition:transform .25s,box-shadow .25s}
-      #serviceMonitor .storage-3d:hover{transform:translateY(-3px) rotateX(1deg);box-shadow:0 18px 30px rgba(0,0,0,.3)}
-      #serviceMonitor .storage-meter{height:13px;border-radius:99px;background:rgba(255,255,255,.06);overflow:hidden;border:1px solid var(--border);box-shadow:inset 0 3px 7px rgba(0,0,0,.35)}
-      #serviceMonitor .storage-meter>div{height:100%;width:0;background:linear-gradient(90deg,#06b6d4,#6366f1,#a855f7);box-shadow:0 0 16px rgba(99,102,241,.45);transition:width .6s}
-      #serviceMonitor .storage-value{font-size:22px;font-weight:850;letter-spacing:-.6px;margin-top:6px}
-    </style>
-    <div class="storage-3d" style="margin-bottom:12px;">
-      <div style="font-size:12px;color:var(--text-dim);margin-bottom:8px;">🖥️ Render App Storage · 512 MB configured allowance</div>
-      <div class="storage-meter"><div id="renderStorageBar"></div></div>
-      <div class="stats-row" style="margin-top:10px;">
-        <div class="stat-card storage-3d"><div class="label">Used</div><div class="storage-value" id="renderUsed">—</div></div>
-        <div class="stat-card storage-3d"><div class="label">Total capacity</div><div class="storage-value" id="renderTotal">512 MB</div></div>
-        <div class="stat-card storage-3d"><div class="label">Free space</div><div class="storage-value" id="renderFree">—</div></div>
-      </div>
-    </div>
-    <div class="storage-3d">
-      <b>☁️ DBByte Cloud Storage · 20 GB</b>
-      <div class="muted small" style="margin-top:5px;">Live bucket usage: actual object bytes and file count, with the configured 20 GB allowance.</div>
-      <div class="storage-meter" style="margin-top:12px;"><div id="firebaseStorageBar"></div></div>
-       <div class="stats-row" style="margin-top:10px;">
-        <div class="stat-card storage-3d"><div class="label">Used</div><div class="storage-value" id="firebaseUsed">—</div></div>
-        <div class="stat-card storage-3d"><div class="label">Files</div><div class="storage-value" id="firebaseFiles">—</div></div>
-        <div class="stat-card storage-3d"><div class="label">Free space / Total</div><div class="storage-value" id="firebaseQuota">Not exposed</div></div>
-      </div>
-      <div class="muted small" id="firebaseDiagnostic" style="margin-top:10px;overflow-wrap:anywhere;">Checking bucket…</div>
-    </div>
-    <div class="muted small" id="storageUpdated" style="margin-top:8px;"></div>
-</div>
-<script>
-function fmtBytes(n) {
-    if (n === null || n === undefined) return '—';
-    const units=['B','KB','MB','GB','TB']; let v=Number(n), i=0;
-    while(v>=1024 && i<units.length-1){v/=1024;i++;}
-    return v.toFixed(i===0?0:2)+' '+units[i];
-}
-async function checkPing() {
-    const el=document.getElementById('pingStatus');
-    el.textContent='Checking…';
-    try {
-        const r=await fetch('{{ url_for("health") }}?check='+Date.now(),{cache:'no-store'});
-        const d=await r.json();
-        el.textContent=r.ok && d.status==='ok' ? '🟢 Online · '+new Date().toLocaleTimeString() : '🔴 Unhealthy';
-    } catch(e) { el.textContent='🔴 Offline / unreachable'; }
-}
-async function refreshServiceMonitor() {
-    try {
-        const r=await fetch('{{ url_for("api_admin_storage") }}',{cache:'no-store'});
-        const d=await r.json();
-        if(!d.ok) throw new Error(d.error||'Could not load storage');
-        const s=d.render||{};
-        const renderFailed=!!s.error;
-        const renderTotal=Number(s.total_bytes||0), renderUsed=Number(s.used_bytes||0);
-        document.getElementById('renderUsed').textContent=renderFailed?'Read failed':fmtBytes(renderUsed);
-        document.getElementById('renderTotal').textContent=renderTotal?fmtBytes(renderTotal):'512 MB*';
-        document.getElementById('renderFree').textContent=renderFailed?'Unavailable':fmtBytes(s.free_bytes);
-        document.getElementById('renderStorageBar').style.width=renderFailed?'0%':Math.min(100,Number(s.used_percent||0))+'%';
-        const f=d.dbbyte||{};
-        const cloudReadFailed=!!f.error || !f.available;
-        document.getElementById('firebaseUsed').textContent=cloudReadFailed?'Read failed':fmtBytes(f.used_bytes);
-        document.getElementById('firebaseFiles').textContent=cloudReadFailed?'Unavailable':(Number(f.file_count||0)+' files');
-        document.getElementById('firebaseQuota').textContent=cloudReadFailed?'Unavailable':fmtBytes(f.free_bytes)+' free / '+fmtBytes(f.quota_bytes);
-        document.getElementById('firebaseQuota').title=cloudReadFailed?(f.error||'DBByte unavailable'):'Configured allowance: '+fmtBytes(f.quota_bytes);
-        document.getElementById('firebaseUsed').title='Measured from DBByte bucket object listing';
-        const cloudBar=document.getElementById('firebaseStorageBar');
-        if(cloudBar) cloudBar.style.width=cloudReadFailed?'0%':Math.min(100,Number(f.used_percent||0))+'%';
-        const diagnostic=document.getElementById('firebaseDiagnostic');
-        diagnostic.textContent='DBByte · Bucket: '+(f.bucket||'not configured')+' · '+(cloudReadFailed?(f.error||'Connection unavailable'):'Live bucket listing');
-        diagnostic.title=f.error||'DBByte storage status';
-        document.getElementById('storageUpdated').textContent='Live · Last checked: '+new Date().toLocaleTimeString()+' · Auto-refresh every 5 seconds';
-    } catch(e) {
-        document.getElementById('storageUpdated').textContent='Storage check failed: '+e.message;
-    }
-}
-refreshServiceMonitor();
-checkPing();
-setInterval(refreshServiceMonitor, 5000);
-setInterval(checkPing, 30000);
-</script>
+{% include '_storage_monitor.html' %}
 
-<!-- ============================================ -->
-<!-- USERS LIST                                    -->
-<!-- ============================================ -->
+<div class="card">
+    <div class="row-between">
+        <div style="flex:1; min-width:0;">
+            <div style="font-size: 13px; font-weight: 700; display:flex; align-items:center; gap:8px;"><svg class="ic" style="color:var(--cyan-hi)"><use href="#i-terminal"/></svg>Server terminal</div>
+            <div class="muted small" style="margin-top: 4px;">Run commands directly on the server: pip install, debugging, logs.</div>
+        </div>
+        <a href="{{ url_for('admin_terminal_page') }}" class="btn btn-cyan btn-sm">Open terminal</a>
+    </div>
+</div>
+
+<!-- USERS -->
 <div class="card mb-3">
     <div class="card-header">
-        <h3>👥 All Users</h3>
+        <h3><svg class="ic"><use href="#i-users"/></svg>All users</h3>
         <span class="badge badge-primary">{{ users|length }}</span>
     </div>
 
     {% if users %}
     <div style="display: flex; flex-direction: column; gap: 12px;">
         {% for u in users %}
-        <div style="padding: 12px; border: 1px solid var(--border); border-radius: 10px;
-                    background: var(--bg-2);">
-            <!-- User header -->
-            <div class="row mb-2" style="gap: 10px;">
+        <div style="padding: 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg-1);">
+            <div class="row mb-2" style="gap: 10px; flex-wrap:nowrap;">
                 {% if u.picture %}
-                    <img src="{{ u.picture }}" style="width:38px;height:38px;border-radius:50%;
-                         flex-shrink:0; object-fit:cover;">
+                    <img src="{{ u.picture }}" alt="" style="width:38px;height:38px;border-radius:50%;flex-shrink:0;object-fit:cover;">
                 {% else %}
-                    <div style="width:38px;height:38px;border-radius:50%;
-                         background:linear-gradient(135deg,var(--primary),var(--cyan));
-                         display:flex;align-items:center;justify-content:center;
-                         font-weight:700;flex-shrink:0;color:white;">
-                        {{ u.name[0]|upper }}
-                    </div>
+                    <div style="width:38px;height:38px;border-radius:50%;background:linear-gradient(135deg,#3b6cf6,#0ea5a4);display:flex;align-items:center;justify-content:center;font-weight:700;flex-shrink:0;color:white;">{{ u.name[0]|upper }}</div>
                 {% endif %}
 
                 <div style="flex: 1; min-width: 0;">
-                    <div class="row" style="gap: 6px; flex-wrap: wrap;">
+                    <div class="row" style="gap: 6px;">
                         <strong style="font-size: 13px;">{{ u.name }}</strong>
-                        {% if u.is_admin %}
-                            <span class="badge badge-admin">👑 Admin</span>
-                        {% endif %}
+                        {% if u.is_admin %}<span class="badge badge-admin">Admin</span>{% endif %}
                     </div>
-                    <div class="muted small" style="word-break: break-all;">
-                        {{ u.email }}
-                    </div>
+                    <div class="muted small" style="word-break: break-all;">{{ u.email }}</div>
                 </div>
 
-                <span class="badge {{ 'badge-premium' if u.plan == 'premium' else 'badge-off' }}">
-                    {{ u.plan|upper }}
-                </span>
+                <span class="badge {{ 'badge-premium' if u.plan in ('premium', 'business') else 'badge-off' }}">{{ (u.plan or 'free')|upper }}</span>
             </div>
 
-            <!-- User stats -->
             <div class="muted small mb-2" style="display: flex; gap: 14px; flex-wrap: wrap;">
-                <span>📁 {{ u.script_count }} bots</span>
-                <span>📊 Limit: {{ u.file_limit }}</span>
-                {% if u.plan_expiry %}
-                    <span>⏱️ Exp: {{ u.plan_expiry[:10] }}</span>
-                {% endif %}
+                <span>{{ u.script_count }} bots</span>
+                <span>Limit: {{ u.file_limit }}</span>
+                {% if u.plan_expiry %}<span>Expires: {{ u.plan_expiry[:10] }}</span>{% endif %}
             </div>
 
-            <!-- File limit edit -->
-            <form method="post" action="{{ url_for('admin_set_limit', uid=u.uid) }}"
-                  style="display: flex; gap: 6px; margin-bottom: 8px;">
-                <input name="limit" type="number" min="0" value="{{ u.file_limit }}"
-                       style="flex: 1; padding: 8px 10px; font-size: 14px;">
-                <button class="btn btn-ghost btn-sm">Save Limit</button>
+            <form method="post" action="{{ url_for('admin_set_limit', uid=u.uid) }}" style="display: flex; gap: 6px; margin-bottom: 8px;">
+                <input name="limit" type="number" min="0" value="{{ u.file_limit }}" style="flex: 1; padding: 8px 10px; font-size: 14px;">
+                <button class="btn btn-ghost btn-sm">Save limit</button>
             </form>
 
-            <!-- Plan + Admin toggles -->
             <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 6px;">
                 <form method="post" action="{{ url_for('admin_set_plan', uid=u.uid) }}">
-                    <select name="plan" onchange="this.form.submit()"
-                            style="padding:8px;font-size:13px;width:100%;">
-                        <option value="free" {{ 'selected' if u.plan=='free' }}>Free Plan</option>
+                    <select name="plan" onchange="this.form.submit()" style="padding:8px;font-size:13px;width:100%;">
+                        <option value="free" {{ 'selected' if u.plan=='free' }}>Free plan</option>
                         <option value="premium" {{ 'selected' if u.plan=='premium' }}>Premium</option>
                         <option value="business" {{ 'selected' if u.plan=='business' }}>Business</option>
                     </select>
@@ -247,135 +102,94 @@ setInterval(checkPing, 30000);
 
                 <form method="post" action="{{ url_for('admin_toggle_admin', uid=u.uid) }}">
                     <input type="hidden" name="is_admin" value="{{ '0' if u.is_admin else '1' }}">
-                    <button class="btn btn-ghost btn-sm" style="width:100%;">
-                        {{ '❌ Remove Admin' if u.is_admin else '👑 Make Admin' }}
-                    </button>
+                    <button class="btn btn-ghost btn-sm" style="width:100%;">{{ 'Remove admin' if u.is_admin else 'Make admin' }}</button>
                 </form>
             </div>
 
-            <!-- Delete user -->
             {% if u.uid != user.uid %}
-            <form method="post" action="{{ url_for('admin_delete_user', uid=u.uid) }}"
-                  onsubmit="return confirm('Delete user {{ u.name }} aur unke saare bots?')">
-                <button class="btn btn-danger btn-sm" style="width: 100%;">
-                    🗑️ Delete User
-                </button>
+            <form method="post" action="{{ url_for('admin_delete_user', uid=u.uid) }}" onsubmit="return confirm('Delete user {{ u.name|replace("'", "") }} and all their bots?')">
+                <button class="btn btn-danger btn-sm" style="width: 100%;"><svg class="ic ic-sm"><use href="#i-trash"/></svg>Delete user</button>
             </form>
             {% endif %}
         </div>
         {% endfor %}
     </div>
     {% else %}
-    <p class="muted small" style="text-align: center; padding: 20px;">
-        No users yet.
-    </p>
+    <p class="muted small" style="text-align: center; padding: 20px;">No users yet.</p>
     {% endif %}
 </div>
 
-<!-- ============================================ -->
-<!-- ALL BOTS LIST                                 -->
-<!-- ============================================ -->
+<!-- BOTS -->
 <div class="card">
     <div class="card-header">
-        <h3>🤖 All Bots</h3>
+        <h3><svg class="ic"><use href="#i-bot"/></svg>All bots</h3>
         <span class="badge badge-primary">{{ scripts|length }}</span>
     </div>
 
     {% if scripts %}
     <div style="display: flex; flex-direction: column; gap: 10px;">
         {% for s in scripts %}
-        <div style="padding: 12px; border: 1px solid var(--border); border-radius: 10px;
-                    background: var(--bg-2);">
-
-            <!-- Bot header -->
+        <div style="padding: 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg-1);">
             <div class="row-between mb-2">
-                <strong style="font-size: 13px; word-break: break-all; flex: 1;">
-                    {{ s.name }}
-                </strong>
-
-                <!-- Status badge -->
+                <strong style="font-size: 13px; word-break: break-all; flex: 1;">{{ s.name }}</strong>
                 {% if s.status == 'pending' %}
-                    <span class="badge badge-gold">⏳ Pending</span>
+                    <span class="badge badge-gold">Pending</span>
                 {% elif s.status == 'rejected' %}
-                    <span class="badge badge-red">❌ Rejected</span>
+                    <span class="badge badge-red">Rejected</span>
                 {% elif s.running %}
                     <span class="badge badge-on"><span class="dot on"></span> Running</span>
                 {% elif s.status == 'approved' %}
-                    <span class="badge badge-green">✓ Approved</span>
+                    <span class="badge badge-green">Approved</span>
                 {% else %}
                     <span class="badge badge-off"><span class="dot off"></span> Stopped</span>
                 {% endif %}
             </div>
 
-            <!-- Owner + info -->
             <div class="muted small mb-2" style="word-break: break-all;">
-                👤 Owner: <code>{{ s.user_id }}</code> · {{ s.type|upper }}<br>
-                🆔 {{ s.id }} · 📅 {{ s.created_at[:19] }}
+                Owner: <code>{{ s.user_id }}</code> · {{ s.type|upper }}<br>
+                ID {{ s.id }} · {{ (s.created_at or '')[:19] }}
             </div>
 
-            <!-- Admin note -->
             {% if s.admin_note %}
-            <div class="muted small mb-2" style="padding: 6px 10px;
-                 background: rgba(124,58,237,0.08); border-radius: 6px;
-                 border-left: 3px solid var(--primary-hi);">
-                💬 {{ s.admin_note }}
-            </div>
+            <div class="muted small mb-2" style="padding: 6px 10px; background: rgba(59,108,246,0.08); border-radius: 6px; border-left: 3px solid var(--primary-hi);">{{ s.admin_note }}</div>
             {% endif %}
 
-            <!-- Running stats -->
             {% if s.running and s.status_info %}
             <div class="muted small mb-2" style="display: flex; gap: 14px; flex-wrap: wrap;">
-                <span>⏱️ {{ s.status_info.uptime }}s</span>
-                <span>💾 {{ s.status_info.memory_mb }}MB</span>
-                <span>🆔 PID {{ s.status_info.pid }}</span>
+                <span>Uptime {{ s.status_info.uptime }}s</span>
+                <span>{{ s.status_info.memory_mb }} MB</span>
+                <span>PID {{ s.status_info.pid }}</span>
             </div>
             {% endif %}
 
-            <!-- Actions -->
             <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 6px;">
                 {% if s.status == 'pending' %}
-                    <a href="{{ url_for('admin_review_detail', sid=s.id) }}"
-                       class="btn btn-primary btn-sm" style="grid-column: span 2;">
-                        🔍 Review Now
-                    </a>
+                    <a href="{{ url_for('admin_review_detail', sid=s.id) }}" class="btn btn-primary btn-sm" style="grid-column: span 2;">Review now</a>
                 {% else %}
                     {% if s.running %}
-                        <button class="btn btn-danger btn-sm"
-                                onclick="adminAct('{{ s.id }}', 'stop')">
-                            ⏹ Stop
-                        </button>
+                        <button class="btn btn-danger btn-sm" onclick="adminAct('{{ s.id }}', 'stop', this)"><svg class="ic ic-sm"><use href="#i-stop"/></svg>Stop</button>
                     {% else %}
-                        <button class="btn btn-primary btn-sm"
-                                onclick="adminAct('{{ s.id }}', 'start')">
-                            ▶ Start
-                        </button>
+                        <button class="btn btn-primary btn-sm" onclick="adminAct('{{ s.id }}', 'start', this)"><svg class="ic ic-sm"><use href="#i-play"/></svg>Start</button>
                     {% endif %}
-                    <button class="btn btn-ghost btn-sm"
-                            onclick="adminViewLogs('{{ s.id }}')">
-                        📜 Logs
-                    </button>
+                    <button class="btn btn-ghost btn-sm" onclick="adminViewLogs('{{ s.id }}')"><svg class="ic ic-sm"><use href="#i-log"/></svg>Logs</button>
                 {% endif %}
             </div>
         </div>
         {% endfor %}
     </div>
     {% else %}
-    <p class="muted small" style="padding: 20px 0; text-align: center;">
-        No bots hosted yet.
-    </p>
+    <p class="muted small" style="padding: 20px 0; text-align: center;">No bots hosted yet.</p>
     {% endif %}
 </div>
 
-<!-- ============================================ -->
-<!-- LOG MODAL                                     -->
-<!-- ============================================ -->
+<!-- LOG MODAL -->
 <div class="modal-backdrop" id="adminLogModal">
     <div class="modal">
         <div class="row-between mb-2">
-            <h3 id="adminLogTitle">📜 Live Log</h3>
+            <h3 id="adminLogTitle" style="display:flex;align-items:center;gap:8px;"><svg class="ic"><use href="#i-log"/></svg>Live log</h3>
             <div class="row">
-                <button class="btn btn-ghost btn-xs" onclick="adminRefreshLog()">🔄 Refresh</button>
-                <button class="icon-btn" onclick="closeAdminModal()">✕</button>
+                <button class="btn btn-ghost btn-xs" onclick="adminRefreshLog()"><svg class="ic ic-sm"><use href="#i-refresh"/></svg>Refresh</button>
+                <button class="icon-btn" onclick="closeAdminModal()" aria-label="Close"><svg class="ic"><use href="#i-x"/></svg></button>
             </div>
         </div>
         <div class="log-box" id="adminLogContent" style="max-height: 500px;">Loading…</div>
@@ -386,36 +200,22 @@ setInterval(checkPing, 30000);
 let adminCurrentLogSid = null;
 let adminLogRefreshInterval = null;
 
-// ============ SCRIPT CONTROLS ============
-async function adminAct(sid, action) {
-    const btn = event ? event.target : null;
+async function adminAct(sid, action, btn) {
     if (btn) { btn.disabled = true; btn.style.opacity = '0.5'; }
-
     try {
         const res = await fetch(`/admin/script/${sid}/${action}`, { method: 'POST' });
         const data = await res.json();
-
-        if (data.ok) {
-            location.reload();
-        } else {
-            alert(data.message || data.error || 'Action failed');
-            if (btn) { btn.disabled = false; btn.style.opacity = '1'; }
-        }
-    } catch (e) {
-        alert('Error: ' + e.message);
-        if (btn) { btn.disabled = false; btn.style.opacity = '1'; }
-    }
+        if (data.ok) { location.reload(); return; }
+        alert(data.message || data.error || 'Action failed');
+    } catch (e) { alert('Error: ' + e.message); }
+    if (btn) { btn.disabled = false; btn.style.opacity = '1'; }
 }
 
-// ============ LOGS ============
 async function adminViewLogs(sid) {
     adminCurrentLogSid = sid;
     document.getElementById('adminLogModal').classList.add('show');
     document.getElementById('adminLogContent').textContent = 'Loading…';
-    document.getElementById('adminLogTitle').innerHTML = '📜 Live Log';
-
     await adminRefreshLog();
-
     if (adminLogRefreshInterval) clearInterval(adminLogRefreshInterval);
     adminLogRefreshInterval = setInterval(adminRefreshLog, 3000);
 }
@@ -425,44 +225,27 @@ async function adminRefreshLog() {
     try {
         const res = await fetch(`/api/script/${adminCurrentLogSid}/logs`);
         const data = await res.json();
-
         if (data.ok) {
-            const log = data.log || '(empty)';
             const el = document.getElementById('adminLogContent');
-            el.textContent = log;
-            el.scrollTop = el.scrollHeight;
-
+            const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 60;
+            el.textContent = data.log || '(empty)';
+            if (nearBottom) el.scrollTop = el.scrollHeight;
             const st = data.status || {};
-            const statusText = st.running
-                ? `<span class="badge badge-on" style="margin-left:8px;">
-                     <span class="dot on"></span> Running
-                   </span>`
-                : `<span class="badge badge-off" style="margin-left:8px;">
-                     <span class="dot off"></span> Stopped
-                   </span>`;
-            document.getElementById('adminLogTitle').innerHTML = `📜 Live Log ${statusText}`;
+            const badge = st.running
+                ? '<span class="badge badge-on" style="margin-left:8px;"><span class="dot on"></span> Running</span>'
+                : '<span class="badge badge-off" style="margin-left:8px;"><span class="dot off"></span> Stopped</span>';
+            document.getElementById('adminLogTitle').innerHTML = '<svg class="ic"><use href="#i-log"/></svg>Live log ' + badge;
         }
-    } catch (e) {
-        console.error(e);
-    }
+    } catch (e) { console.error(e); }
 }
 
 function closeAdminModal() {
     document.getElementById('adminLogModal').classList.remove('show');
-    if (adminLogRefreshInterval) {
-        clearInterval(adminLogRefreshInterval);
-        adminLogRefreshInterval = null;
-    }
+    if (adminLogRefreshInterval) { clearInterval(adminLogRefreshInterval); adminLogRefreshInterval = null; }
     adminCurrentLogSid = null;
 }
 
-// ============ MODAL / KEYBOARD ============
-document.getElementById('adminLogModal').addEventListener('click', (e) => {
-    if (e.target.id === 'adminLogModal') closeAdminModal();
-});
-
-document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') closeAdminModal();
-});
+document.getElementById('adminLogModal').addEventListener('click', (e) => { if (e.target.id === 'adminLogModal') closeAdminModal(); });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeAdminModal(); });
 </script>
 {% endblock %}
