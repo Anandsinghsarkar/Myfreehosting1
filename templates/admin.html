@@ -115,6 +115,7 @@
         <div class="stat-card storage-3d"><div class="label">Cloud files</div><div class="storage-value" id="firebaseFiles">—</div></div>
         <div class="stat-card storage-3d"><div class="label">Quota</div><div class="storage-value" id="firebaseQuota">Not exposed</div></div>
       </div>
+      <div class="muted small" id="firebaseDiagnostic" style="margin-top:10px;overflow-wrap:anywhere;">Checking bucket…</div>
     </div>
     <div class="muted small" id="storageUpdated" style="margin-top:8px;"></div>
 </div>
@@ -145,10 +146,13 @@ async function refreshServiceMonitor() {
         document.getElementById('renderFree').textContent='Not exposed';
         document.getElementById('renderStorageBar').style.width=s.used_bytes>0?'100%':'0%';
         const f=d.firebase||{};
-        const cloudReadFailed=!!f.error;
+        const cloudReadFailed=!!f.error || !f.available;
         document.getElementById('firebaseUsed').textContent=cloudReadFailed?'Read failed':(f.configured?fmtBytes(f.used_bytes):'Not configured');
         document.getElementById('firebaseFiles').textContent=cloudReadFailed?'Unavailable':(f.configured?(f.file_count+' files'):'—');
-        document.getElementById('firebaseQuota').textContent=cloudReadFailed?('Bucket error: '+f.error.slice(0,90)):(f.configured?'Not exposed':'Not configured');
+        document.getElementById('firebaseQuota').textContent=cloudReadFailed?'Bucket unavailable':'Not exposed';
+        const diagnostic=document.getElementById('firebaseDiagnostic');
+        diagnostic.textContent='Bucket: '+(f.bucket||'not verified')+' · Service project: '+(f.service_account_project||'unknown')+(f.error?' · '+f.error:'');
+        diagnostic.title=f.error||'Firebase Storage bucket status';
         document.getElementById('storageUpdated').textContent='Updated: '+new Date().toLocaleTimeString();
     } catch(e) {
         document.getElementById('storageUpdated').textContent='Storage check failed: '+e.message;
