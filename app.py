@@ -730,7 +730,7 @@ def api_restart(sid):
     fpath = os.path.join(sdir, s['name'])
     if not os.path.exists(fpath):
         storage_helper.download_script_folder(s['user_id'], sid, sdir)
-    ok, msg = runner.start_script(sid, s['user_id'], fpath, s['type'])
+    ok, msg = runner.start_script(sid, s['user_id'], fpath, s['type'], env_vars=s.get('env_vars', {}))
     if ok:
         db.update_script(sid, {'running': True, 'status': 'running'})
     return jsonify({'ok': ok, 'message': msg})
@@ -1308,7 +1308,7 @@ def restore_running_scripts():
                 print(f'[RESTORE] Missing source for {sid}; keeping it stopped', flush=True)
                 db.update_script(sid, {'running': False, 'status': 'approved', 'last_start_error': 'Source files not found in persistent storage'})
                 continue
-            ok, message = runner.start_script(sid, uid, main_path, script.get('type', 'py'))
+            ok, message = runner.start_script(sid, uid, main_path, script.get('type', 'py'), env_vars=script.get('env_vars', {}))
             if ok:
                 db.update_script(sid, {'running': True, 'status': 'running', 'last_restored_at': datetime.utcnow().isoformat()})
                 restored += 1
