@@ -194,7 +194,7 @@ def _cleanup(script_id):
 
 
 def _sync_runtime_folder(script_id, user_id, script_dir, proc):
-    """Persist bot-created session/database files to Firebase while the process runs."""
+    """Persist bot-created session/database files to DBByte while the process runs."""
     import time
     while proc.poll() is None:
         time.sleep(60)
@@ -203,9 +203,9 @@ def _sync_runtime_folder(script_id, user_id, script_dir, proc):
         try:
             from storage_helper import sync_script_folder
             if not sync_script_folder(script_dir, user_id, script_id):
-                print(f"[FIREBASE] Runtime sync incomplete for bot {script_id}", flush=True)
+                print(f"[DBBYTE] Runtime sync incomplete for bot {script_id}", flush=True)
         except Exception as exc:
-            print(f"[FIREBASE] Runtime sync error for bot {script_id}: {exc}", flush=True)
+            print(f"[DBBYTE] Runtime sync error for bot {script_id}: {exc}", flush=True)
 
 
 def start_script(script_id, user_id, file_path, file_type):
@@ -310,9 +310,9 @@ def stop_script(script_id):
         # Upload the final session/database/log changes before app.py clears the
         # temporary Render working directory.
         from storage_helper import sync_script_folder
-        sync_ok = sync_script_folder(os.path.dirname(info['log_file'].name), info.get('user_id'), script_id)
+        sync_ok = sync_script_folder(os.path.dirname(info['log_file'].name), info.get('user_id'), script_id, prune=True)
         if not sync_ok:
-            sync_error = "Firebase sync was incomplete"
+            sync_error = "DBByte sync was incomplete"
     except Exception as exc:
         sync_ok = False
         sync_error = str(exc)
