@@ -34,7 +34,8 @@ app.config.update(
 )
 app.config['MAX_CONTENT_LENGTH'] = MAX_FILE_SIZE
 
-init_firebase()
+# Firebase Admin is initialized lazily on the first authenticated/database request.
+# This lets Railway bind its health-check port immediately.
 
 FIREBASE_WEB_CONFIG = {
     'apiKey': os.environ.get('FB_API_KEY', ''),
@@ -49,6 +50,7 @@ FIREBASE_WEB_CONFIG = {
 # --- Auth ---
 def verify_token(id_token):
     try:
+        init_firebase()
         return fb_auth.verify_id_token(id_token)
     except Exception as e:
         print(f"Token fail: {e}")
@@ -1322,14 +1324,21 @@ def restore_running_scripts():
     print(f'[RESTORE] Finished. Restarted {restored} bot(s).', flush=True)
 
 
-# Start the in-process keep-alive loop (same approach as the Hoster project), then restore bots.
+# Keep Render's optional keep-alive behavior, but do not block application import.
+# Railway health checks must reach /health before database or bot restore work.
 _start_keep_alive()
-
-# Restore bots when the Render web service process starts. Use one Gunicorn worker to avoid duplicate bot processes.
-restore_running_scripts()
 
 import atexit
 atexit.register(runner.cleanup_all)
+
+# Restoration can perform remote Firestore/B2 I/O and dependency setup.
+# Run it in the background so Gunicorn binds the HTTP port immediately.
+if os.environ.get('RESTORE_BOTS_ON_STARTUP', 'true').strip().lower() in ('1', 'true', 'yes', 'on'):
+    threading.Thread(
+        target=restore_running_scripts,
+        name='bot-restore-startup',
+        daemon=True,
+    ).start()
 
 
 
