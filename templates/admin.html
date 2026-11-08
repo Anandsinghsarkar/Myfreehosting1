@@ -40,6 +40,29 @@
 
 {% include '_storage_monitor.html' %}
 
+<!-- FULL DATA RESET: ADMIN ONLY -->
+<div class="card" style="border:1px solid rgba(239,68,68,.55);background:rgba(239,68,68,.045);">
+    <div class="card-header">
+        <h3 style="color:#ef4444;">⚠️ Clear all hosting data</h3>
+        <span class="badge badge-red">Permanent</span>
+    </div>
+    <p class="muted small" style="line-height:1.6;">
+        One action will stop hosted bots and permanently clear every bot ever saved in this panel,
+        all local bot files, all Backblaze B2 objects and historical versions, backups, user records,
+        payment records and install logs. The active admin profile and global panel settings stay intact.
+        This cannot be undone.
+    </p>
+    <label for="clearAllConfirmation" class="small" style="display:block;margin:12px 0 6px;font-weight:700;">
+        Type <code>CLEAR ALL DATA</code> to enable the reset
+    </label>
+    <input id="clearAllConfirmation" type="text" autocomplete="off" spellcheck="false"
+           placeholder="CLEAR ALL DATA" style="width:100%;margin-bottom:10px;">
+    <button id="clearAllButton" class="btn btn-danger" style="width:100%;" disabled onclick="clearAllHostingData()">
+        <svg class="ic ic-sm"><use href="#i-trash"/></svg> Permanently clear everything
+    </button>
+    <div id="clearAllStatus" class="small" role="status" aria-live="polite" style="margin-top:10px;"></div>
+</div>
+
 <div class="card">
     <div class="row-between">
         <div style="flex:1; min-width:0;">
@@ -197,6 +220,45 @@
 </div>
 
 <script>
+const clearAllInput = document.getElementById('clearAllConfirmation');
+const clearAllButton = document.getElementById('clearAllButton');
+if (clearAllInput && clearAllButton) {
+    clearAllInput.addEventListener('input', () => {
+        clearAllButton.disabled = clearAllInput.value.trim() !== 'CLEAR ALL DATA';
+    });
+}
+
+async function clearAllHostingData() {
+    if (!clearAllInput || clearAllInput.value.trim() !== 'CLEAR ALL DATA') return;
+    const accepted = window.confirm(
+        'FINAL WARNING: This permanently deletes all hosted bots, all backups and all cloud/local bot storage, plus user/payment/install records. This cannot be undone. Continue?'
+    );
+    if (!accepted) return;
+
+    clearAllButton.disabled = true;
+    clearAllButton.textContent = 'Clearing all data… please wait';
+    const status = document.getElementById('clearAllStatus');
+    status.textContent = 'Stopping bots and clearing cloud storage. Do not close this page.';
+    status.style.color = 'var(--gold)';
+    try {
+        const response = await fetch('/admin/data/clear', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest'},
+            body: JSON.stringify({confirmation: 'CLEAR ALL DATA'})
+        });
+        const data = await response.json();
+        if (!response.ok || !data.ok) throw new Error(data.error || 'Reset failed');
+        status.textContent = data.message + ' Storage usage will refresh now.';
+        status.style.color = 'var(--green, #22c55e)';
+        setTimeout(() => location.reload(), 1800);
+    } catch (error) {
+        status.textContent = 'Reset incomplete: ' + error.message + ' Check server logs and storage permissions before retrying.';
+        status.style.color = '#ef4444';
+        clearAllButton.disabled = clearAllInput.value.trim() !== 'CLEAR ALL DATA';
+        clearAllButton.innerHTML = '<svg class="ic ic-sm"><use href="#i-trash"/></svg> Retry permanent clear';
+    }
+}
+
 let adminCurrentLogSid = null;
 let adminLogRefreshInterval = null;
 
