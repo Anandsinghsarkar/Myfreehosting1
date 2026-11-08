@@ -368,3 +368,61 @@ def get_storage_usage():
         data = _measure_storage_usage()
         _USAGE_CACHE.update({"at": now, "data": data})
         return dict(data)
+
+
+
+def clear_all_storage():
+    """Permanently empty the configured B2 bucket, including old versions and delete markers.
+
+    Returns a structured result and verifies that no object versions/markers remain.
+    """
+    global LAST_ERROR, _USAGE_CACHE
+    try:
+        client = _client()
+        paginator = client.get_paginator("list_object_versions")
+        deleted_versions = 0
+        deleted_markers = 0
+
+        # Process one listing page at a time so large buckets do not exhaust memory.
+        for page in paginator.paginate(Bucket=BUCKET):
+            entries = []
+            for item in page.get("Versions", []):
+                entries.append({"Key": item["Key"], "VersionId": item["VersionId"]})
+                deleted_versions += 1
+            for item in page.get("DeleteMarkers", []):
+                entries.append({"Key": item["Key"], "VersionId": item["VersionId"]})
+                deleted_markers += 1
+            for offset in range(0, len(entries), 1000):
+                client.delete_objects(
+                    Bucket=BUCKET,
+                    Delete={"Objects": entries[offset:offset + 1000], "Quiet": True},
+                )
+
+        # Verify from a fresh listing; never report an empty bucket without proof.
+        remaining_versions = 0
+        remaining_markers = 0
+        for page in client.get_paginator("list_object_versions").paginate(Bucket=BUCKET):
+            remaining_versions += len(page.get("Versions", []))
+            remaining_markers += len(page.get("DeleteMarkers", []))
+        if remaining_versions or remaining_markers:
+            raise BackblazeError(
+                f"Bucket is not empty: {remaining_versions} versions and "
+                f"{remaining_markers} delete markers remain. Check Object Lock/retention."
+            )
+
+        _SYNC_CACHE.clear()
+        with _USAGE_LOCK:
+            _USAGE_CACHE = {"at": 0.0, "data": None}
+        LAST_ERROR = ""
+        return {
+            "ok": True,
+            "bucket": BUCKET,
+            "deleted_versions": deleted_versions,
+            "deleted_markers": deleted_markers,
+            "remaining_versions": 0,
+            "remaining_markers": 0,
+        }
+    except Exception as exc:
+        LAST_ERROR = _error_text(exc)
+        print(f"[BACKBLAZE] Full storage reset failed: {LAST_ERROR}", flush=True)
+        return {"ok": False, "bucket": BUCKET, "error": LAST_ERROR}
