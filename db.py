@@ -320,15 +320,14 @@ def clear_all_application_data(preserve_admin_uid=None):
             docs = list(collection.limit(400).stream())
             if not docs:
                 break
+            batch_count = 0
             for doc in docs:
                 if collection_name == "users" and preserve_admin_uid and doc.id == preserve_admin_uid:
                     continue
                 batch.delete(doc.reference)
+                batch_count += 1
                 deleted[collection_name] += 1
-            if deleted[collection_name] == 0 and collection_name == "users":
+            if batch_count == 0:
                 break
             batch.commit()
-            # If only the preserved admin remains, there is nothing else to delete.
-            if collection_name == "users" and len(docs) == 1 and preserve_admin_uid and docs[0].id == preserve_admin_uid:
-                break
     return deleted
