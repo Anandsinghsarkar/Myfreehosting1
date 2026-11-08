@@ -300,3 +300,35 @@ def log_install(user_id, module, status, log):
         })
     except Exception as e:
         print(f"⚠️ log_install failed: {e}")
+
+
+
+# ==================== FULL APPLICATION DATA RESET ====================
+
+def clear_all_application_data(preserve_admin_uid=None):
+    """Delete all hosted-bot records, users (except the active admin), payments and install logs.
+
+    Global settings are intentionally preserved so the panel remains configured.
+    Firebase Authentication identities are not deleted; users can sign in again.
+    """
+    firestore = get_db()
+    deleted = {"scripts": 0, "payments": 0, "install_logs": 0, "users": 0}
+    for collection_name in ("scripts", "payments", "install_logs", "users"):
+        collection = firestore.collection(collection_name)
+        while True:
+            batch = firestore.batch()
+            docs = list(collection.limit(400).stream())
+            if not docs:
+                break
+            for doc in docs:
+                if collection_name == "users" and preserve_admin_uid and doc.id == preserve_admin_uid:
+                    continue
+                batch.delete(doc.reference)
+                deleted[collection_name] += 1
+            if deleted[collection_name] == 0 and collection_name == "users":
+                break
+            batch.commit()
+            # If only the preserved admin remains, there is nothing else to delete.
+            if collection_name == "users" and len(docs) == 1 and preserve_admin_uid and docs[0].id == preserve_admin_uid:
+                break
+    return deleted
