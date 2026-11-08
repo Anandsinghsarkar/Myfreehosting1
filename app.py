@@ -927,6 +927,74 @@ def admin_terminal_history():
 
 # ========== ADMIN: Dashboard / Users / Payments ==========
 
+@app.route('/admin/data/clear', methods=['POST'])
+@admin_required
+def admin_clear_all_data():
+    """Stop hosted bots, empty local + B2 storage, then clear application records."""
+    data = request.get_json(silent=True) or {}
+    if str(data.get('confirmation', '')).strip() != 'CLEAR ALL DATA':
+        return jsonify({'ok': False, 'error': 'Type CLEAR ALL DATA exactly to confirm.'}), 400
+
+    admin = current_user()
+    result = {
+        'bots_stopped': 0,
+        'local_files_removed': False,
+        'cloud': {},
+        'database': {},
+    }
+    try:
+        # Stop tracked bot processes first. Final sync may run, so cloud deletion follows.
+        for script in db.list_scripts():
+            try:
+                if runner.is_running(script['id']):
+                    stopped, message = runner.stop_script(script['id'])
+                    if stopped or not runner.is_running(script['id']):
+                        result['bots_stopped'] += 1
+                    else:
+                        app.logger.warning('Could not stop bot %s before reset: %s', script['id'], message)
+            except Exception as exc:
+                app.logger.warning('Bot stop error for %s: %s', script.get('id'), exc)
+
+        # Delete every object in the configured B2 bucket, including historical versions.
+        cloud_result = storage_helper.clear_all_storage()
+        result['cloud'] = cloud_result
+        if not cloud_result.get('ok'):
+            return jsonify({
+                'ok': False,
+                'error': 'Cloud storage could not be verified as empty. Database and local files were kept. ' + str(cloud_result.get('error', '')),
+                'result': result,
+            }), 502
+
+        # Remove every app-owned local bot upload and payment QR file.
+        if os.path.isdir(UPLOAD_DIR):
+            shutil.rmtree(UPLOAD_DIR)
+        os.makedirs(UPLOAD_DIR, exist_ok=True)
+        qr_dir = os.path.join(BASE_DIR, 'static', 'uploads', 'payment_qr')
+        if os.path.isdir(qr_dir):
+            shutil.rmtree(qr_dir)
+        os.makedirs(qr_dir, exist_ok=True)
+        result['local_files_removed'] = True
+
+        # Keep the active admin profile and global settings so the panel remains usable.
+        result['database'] = db.clear_all_application_data(preserve_admin_uid=admin['uid'])
+        db.update_settings({'qr_code_url': ''})
+
+        return jsonify({
+            'ok': True,
+            'message': 'All hosted bots, bot backups, local bot files, user records, payment records and install logs have been cleared. Global panel settings and the active admin account were preserved.',
+            'result': result,
+        })
+    except Exception as exc:
+        app.logger.exception('Full data reset failed')
+        return jsonify({
+            'ok': False,
+            'error': 'Reset was incomplete: ' + str(exc),
+            'result': result,
+        }), 500
+
+
+
+
 @app.route('/admin')
 @admin_required
 def admin_dashboard():
