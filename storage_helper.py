@@ -383,8 +383,10 @@ def clear_all_storage():
         deleted_versions = 0
         deleted_markers = 0
 
-        # Process one listing page at a time so large buckets do not exhaust memory.
-        for page in paginator.paginate(Bucket=BUCKET):
+        # Always delete the first page repeatedly. Advancing a paginator while
+        # deleting earlier keys can skip entries because continuation markers move.
+        while True:
+            page = client.list_object_versions(Bucket=BUCKET, MaxKeys=1000)
             entries = []
             for item in page.get("Versions", []):
                 entries.append({"Key": item["Key"], "VersionId": item["VersionId"]})
@@ -392,11 +394,18 @@ def clear_all_storage():
             for item in page.get("DeleteMarkers", []):
                 entries.append({"Key": item["Key"], "VersionId": item["VersionId"]})
                 deleted_markers += 1
+            if not entries:
+                break
             for offset in range(0, len(entries), 1000):
-                client.delete_objects(
+                response = client.delete_objects(
                     Bucket=BUCKET,
                     Delete={"Objects": entries[offset:offset + 1000], "Quiet": True},
                 )
+                errors = response.get("Errors", [])
+                if errors:
+                    raise BackblazeError(
+                        "B2 refused to delete some objects: " + str(errors[:3])
+                    )
 
         # Verify from a fresh listing; never report an empty bucket without proof.
         remaining_versions = 0
